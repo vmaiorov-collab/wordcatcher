@@ -267,7 +267,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 0 40px 128px; }
 .pop-tr.err { color: var(--bad); font-size: 14px; font-weight: 400; }
 .pop-ctx {
   font: italic 400 14.5px/1.55 var(--serif); color: var(--muted);
-  border-left: 3px solid var(--mark-solid); padding-left: 12px; margin-bottom: 12px; max-height: 88px; overflow: auto;
+  border-left: 3px solid var(--mark-solid); padding-left: 12px; margin-bottom: 12px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
 }
 .pop-foot { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
 .pop-state { display: inline-flex; align-items: center; gap: 6px; color: var(--good); font-weight: 500; }
@@ -284,7 +285,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 0 40px 128px; }
 .empty h3 { font: 500 28px/1.2 var(--serif); letter-spacing: -0.015em; margin: 0 0 8px; }
 .empty p { color: var(--muted); margin: 0; }
 
-.word-list { list-style: none; padding: 0; margin: 0; max-width: 880px; }
+.word-list { list-style: none; padding: 0; margin: 0; }
 .word-list li {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 40px;
   padding: 26px 0; border-top: 1px solid var(--line);

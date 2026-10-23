@@ -35,7 +35,8 @@
   const ICON_CHECK = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
   const ICON_X = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
 
-  const saveWords = () => { store.set('wc_words', words); $('#count').textContent = words.length; };
+  const updateCount = () => { $('#count').textContent = words.length; };
+  const saveWords = () => { store.set('wc_words', words); updateCount(); };
   const esc = (s) => { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
   const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
@@ -628,7 +629,7 @@
   });
 
   // ---------- init ----------
-  saveWords();
+  updateCount(); // reading must never rewrite the saved list
   const saved = store.get('wc_article', null);
   renderArticle(saved && saved.blocks ? saved : DEMO);
 })();
