@@ -128,7 +128,7 @@ app.get('/api/translate', async (req, res) => {
   }
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'docs')));
 
 if (require.main === module) {
   app.listen(PORT, () => console.log(`Wordcatcher is running: http://localhost:${PORT}`));

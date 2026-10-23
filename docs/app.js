@@ -50,6 +50,79 @@
     s.classList.remove('hidden');
   }
 
+  // Works in two modes:
+  //  1) with the Node server (npm start): /api/article and /api/translate are used;
+  //  2) on static hosting (GitHub Pages): the browser fetches the page through a public
+  //     CORS proxy, extracts the article with Readability and calls MyMemory directly.
+  const PROXIES = [
+    (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+    (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+  ];
+
+  // Returns { ok, data } if a Wordcatcher server answered, or null on static hosting.
+  async function serverJson(path, params) {
+    let r;
+    try { r = await fetch(path + '?' + new URLSearchParams(params)); } catch { return null; }
+    const ct = (r.headers && r.headers.get && r.headers.get('content-type')) || '';
+    if (!ct.includes('application/json')) return null;
+    return { ok: r.ok, data: await r.json() };
+  }
+
+  function extractClient(html, pageUrl) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const base = doc.createElement('base');
+    base.href = pageUrl;
+    doc.head.prepend(base);
+    const art = new Readability(doc).parse();
+    if (!art || !art.content) return null;
+
+    const content = new DOMParser().parseFromString(art.content, 'text/html');
+    const norm = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    const blocks = [];
+    content.querySelectorAll('h1,h2,h3,h4,p,li').forEach((el) => {
+      const text = el.textContent.replace(/\s+/g, ' ').trim();
+      if (!text) return;
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'h1') return;
+      if (!blocks.length && /^h\d$/.test(tag)) {
+        const t = norm(art.title || '');
+        const h = norm(text);
+        if (t && h && (t.includes(h) || h.includes(t))) return;
+      }
+      blocks.push({ type: tag === 'p' || tag === 'li' ? 'p' : 'h', text });
+    });
+    if (!blocks.length) return null;
+    let host = '';
+    try { host = new URL(pageUrl).hostname; } catch { /* ignore */ }
+    return {
+      title: (art.title || '').trim(),
+      byline: (art.byline || '').trim(),
+      site: (art.siteName || host).trim(),
+      blocks,
+    };
+  }
+
+  async function fetchArticle(url) {
+    const s = await serverJson('/api/article', { url });
+    if (s) {
+      if (!s.ok) throw new Error(s.data.error || 'Не удалось загрузить статью.');
+      return s.data;
+    }
+    if (!/^https?:\/\//i.test(url)) throw new Error('Это не похоже на ссылку.');
+    if (typeof Readability === 'undefined') {
+      throw new Error('Не загрузился модуль разбора статей. Проверь интернет или вставь текст вручную.');
+    }
+    for (const proxy of PROXIES) {
+      try {
+        const r = await fetch(proxy(url));
+        if (!r.ok) continue;
+        const a = extractClient(await r.text(), url);
+        if (a) return a;
+      } catch { /* try the next proxy */ }
+    }
+    throw new Error('Не удалось загрузить статью. Нажми «или вставить текст вручную» и вставь текст.');
+  }
+
   $('#toggle-paste').addEventListener('click', () => $('#paste-form').classList.toggle('hidden'));
 
   $('#url-form').addEventListener('submit', async (e) => {
@@ -60,9 +133,7 @@
     btn.disabled = true;
     setStatus('Загружаю статью…');
     try {
-      const r = await fetch('/api/article?' + new URLSearchParams({ url }));
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || 'Не удалось загрузить статью.');
+      const d = await fetchArticle(url);
       setStatus('');
       renderArticle(d);
       store.set('wc_article', d);
@@ -172,11 +243,27 @@
   let current = null;
   let anchor = null;
 
+  const trCache = new Map();
+
   async function translate(text) {
-    const r = await fetch('/api/translate?' + new URLSearchParams({ q: text, from: 'en', to: lang }));
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Ошибка перевода');
-    return d.translation;
+    const key = lang + '|' + text.toLowerCase();
+    if (trCache.has(key)) return trCache.get(key);
+    let t;
+    const s = await serverJson('/api/translate', { q: text, from: 'en', to: lang });
+    if (s) {
+      if (!s.ok) throw new Error(s.data.error || 'Ошибка перевода');
+      t = s.data.translation;
+    } else {
+      const r = await fetch('https://api.mymemory.translated.net/get?' + new URLSearchParams({ q: text, langpair: 'en|' + lang }));
+      const d = await r.json();
+      t = d && d.responseData && d.responseData.translatedText;
+      if (!t || Number(d.responseStatus) !== 200 || /MYMEMORY WARNING/i.test(t)) {
+        throw new Error('Сервис перевода недоступен или исчерпан дневной лимит.');
+      }
+      if (text === text.toLowerCase()) t = t.toLowerCase();
+    }
+    trCache.set(key, t);
+    return t;
   }
 
   function closePopup() {
