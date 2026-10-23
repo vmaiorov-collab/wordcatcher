@@ -1,0 +1,17 @@
+{
+  "name": "wordcatcher",
+  "version": "1.0.0",
+  "description": "Read articles by URL, click words to translate, build a vocabulary list and practice with a quiz.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.5.0",
+    "express": "^4.19.2",
+    "jsdom": "^24.1.0"
+  }
+}
