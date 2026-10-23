@@ -19,15 +19,21 @@
 
   const DEMO = {
     src: 'demo',
-    title: 'Tap any word',
+    title: 'Why the news is the best language teacher',
     site: 'Пример',
-    byline: 'нажми на любое слово, чтобы увидеть перевод',
+    byline: '',
+    hint: 'idioms',
     blocks: [
-      { type: 'p', text: 'Reading the news is one of the quickest ways to pick up a language. The vocabulary is current, the sentences are real, and every article gives you something unfamiliar to chase down.' },
-      { type: 'p', text: 'Click a word and its translation appears next to it. Select a few words together and you can translate a whole phrase.' },
-      { type: 'p', text: "Everything you click is saved to your list, so tonight's reading becomes tomorrow's quiz." },
+      { type: 'p', text: 'A textbook can teach you what a language sounded like ten years ago. A news article teaches you what people are saying this morning: the new words, the odd idioms, the headlines that bend the rules of grammar.' },
+      { type: 'p', text: 'The trick is to stop only at the words that matter. Click one, see what it means, and move on before you lose the thread of the story.' },
     ],
   };
+
+  // header gets a hairline once the page scrolls under it
+  window.addEventListener('scroll', () => $('#top').classList.toggle('scrolled', window.scrollY > 8), { passive: true });
+
+  const ICON_CHECK = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
+  const ICON_X = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
 
   const saveWords = () => { store.set('wc_words', words); $('#count').textContent = words.length; };
   const esc = (s) => { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
@@ -141,8 +147,9 @@
 
   $('#url-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const url = $('#url').value.trim();
+    let url = $('#url').value.trim();
     if (!url) return;
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url = 'https://' + url; // allow "bbc.com/news/…"
     const btn = $('#load-btn');
     btn.disabled = true;
     setStatus('Загружаю статью…');
@@ -172,6 +179,9 @@
   function renderArticle(a) {
     closePopup();
     currentSrc = a.src || '';
+    const isDemo = currentSrc === 'demo';
+    $('#view-read').classList.toggle('is-demo', isDemo);
+    $('#view-read').classList.toggle('is-article', !isDemo);
     $('#meta').textContent = [a.site, a.byline].filter(Boolean).join(', ');
     $('#title').textContent = a.title || '';
     body.innerHTML = '';
@@ -193,8 +203,13 @@
       if (last < b.text.length) el.append(b.text.slice(last));
       body.append(el);
     });
+    if (isDemo && a.hint) {
+      // one slow marker stroke over a single word shows where to click
+      const target = [...body.querySelectorAll('.w')].find((s) => s.textContent.toLowerCase() === a.hint);
+      if (target) target.classList.add('hint');
+    }
     refreshHighlights();
-    if (a.src !== 'demo') window.scrollTo({ top: 0 });
+    if (!isDemo) window.scrollTo({ top: 0 });
   }
 
   function refreshHighlights() {
@@ -208,10 +223,11 @@
     const list = words.filter((w) => w.src === currentSrc && w.lang === lang);
     $('#margin-count').textContent = list.length || '';
     $('#margin-empty').classList.toggle('hidden', list.length > 0);
+    $('#margin').classList.toggle('is-empty', list.length === 0);
     $('#margin-list').innerHTML = list.map((w) => `
       <li>
         <div><span class="m-w">${esc(w.text)}</span><span class="m-t">${esc(w.tr)}</span></div>
-        <button class="m-x" data-id="${esc(w.id)}" title="Убрать из списка" aria-label="Убрать из списка">✕</button>
+        <button class="m-x icon" data-id="${esc(w.id)}" title="Убрать из словаря" aria-label="Убрать из словаря">${ICON_X}</button>
       </li>`).join('');
   }
 
@@ -255,6 +271,7 @@
 
     const span = e.target.closest('.w');
     if (!span) return;
+    body.querySelectorAll('.w.hint').forEach((h) => h.classList.remove('hint'));
     const block = span.closest('p,h3');
     const ctx = sentenceAround(block.dataset.text || '', Number(span.dataset.o));
     clearActive();
@@ -332,10 +349,10 @@
     else tr.textContent = c.tr;
 
     const inList = words.some((w) => w.key === c.key && w.lang === lang);
-    $('#pop-state').textContent = inList ? '✓ В списке' : '';
+    $('#pop-state').innerHTML = inList ? ICON_CHECK + 'В словаре' : '';
     const t = $('#pop-toggle');
     t.classList.toggle('hidden', c.status === 'loading');
-    t.textContent = c.status === 'error' ? 'Повторить' : inList ? 'Убрать из списка' : 'Добавить в список';
+    t.textContent = c.status === 'error' ? 'Повторить' : inList ? 'Убрать' : 'Добавить';
     positionPopup();
   }
 
@@ -417,14 +434,40 @@
     const q = $('#search').value.trim().toLowerCase();
     const list = words.filter((w) => !q || w.key.includes(q) || w.tr.toLowerCase().includes(q));
     $('#empty-words').classList.toggle('hidden', words.length > 0);
-    $('#word-list').innerHTML = list.map((w) => `
+    $('#words-sub').textContent = words.length
+      ? `${words.length} ${plural(words.length, ['слово', 'слова', 'слов'])} из прочитанных статей`
+      : 'Слова, на которые ты нажимаешь в тексте, собираются здесь.';
+
+    const where = (src) => {
+      if (src === 'paste') return 'вставленный текст';
+      if (src === 'demo') return 'пример';
+      try { return new URL(src).hostname.replace(/^www\./, ''); } catch { return ''; }
+    };
+    const when = (t) => new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }).replace('.', '');
+
+    $('#word-list').innerHTML = list.map((w) => {
+      const level = Math.max(0, Math.min(3, (w.right || 0) - (w.wrong || 0)));
+      const dots = [0, 1, 2].map((i) => `<i class="${i < level ? 'on' : ''}"></i>`).join('');
+      const meta = [where(w.src), when(w.added)].filter(Boolean).join(', ');
+      return `
       <li>
         <div class="wl-word">${esc(w.text)}</div>
-        <button class="wl-del" data-id="${esc(w.id)}" title="Удалить">✕</button>
         <div class="wl-tr">${esc(w.tr)}</div>
         ${w.context ? `<div class="wl-ctx">${esc(w.context)}</div>` : ''}
-        <div class="wl-stats">знал: ${w.right} · ошибся: ${w.wrong}</div>
-      </li>`).join('');
+        <div class="wl-side">
+          <span class="wl-meta">${esc(meta)}</span>
+          <span class="dots" title="Освоено на ${level} из 3" aria-label="Освоено на ${level} из 3">${dots}</span>
+          <button class="wl-del icon" data-id="${esc(w.id)}" title="Удалить" aria-label="Удалить">${ICON_X}</button>
+        </div>
+      </li>`;
+    }).join('');
+  }
+
+  function plural(n, forms) {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return forms[0];
+    if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return forms[1];
+    return forms[2];
   }
 
   $('#search').addEventListener('input', renderWords);
@@ -463,8 +506,8 @@
     quiz = null;
     const n = pool().length;
     area.innerHTML = n
-      ? `<div class="empty"><p>Слов для этого языка: <b>${n}</b>.</p><p>Выбери режим и нажми «Начать». Слова, в которых ты чаще ошибаешься, будут попадаться чаще.</p></div>`
-      : `<div class="empty"><p>В списке пока нет слов для этого языка.</p><p>Открой статью и нажми на несколько слов.</p></div>`;
+      ? `<div class="empty"><h3>Готов?</h3><p>В словаре ${n} ${plural(n, ['слово', 'слова', 'слов'])} для этого языка. Выбери режим и начни раунд.</p></div>`
+      : `<div class="empty"><h3>Для квиза нужны слова</h3><p>Открой статью и нажми на несколько слов: они сразу появятся здесь.</p></div>`;
   }
 
   $('#quiz-start').addEventListener('click', startQuiz);
@@ -475,7 +518,7 @@
     const dir = $('#quiz-dir').value;
     if (!p.length) return quizIntro();
     if (mode === 'choice' && p.length < 2) {
-      area.innerHTML = '<div class="empty"><p>Для режима «Выбор ответа» нужно хотя бы 2 слова.</p></div>';
+      area.innerHTML = '<div class="empty"><h3>Нужно хотя бы два слова</h3><p>Для выбора ответа должно быть из чего выбирать. Добавь ещё слов или переключись на карточки.</p></div>';
       return;
     }
     const queue = p
@@ -493,20 +536,22 @@
   function renderQuiz() {
     if (!quiz) return;
     if (quiz.i >= quiz.queue.length) {
-      area.innerHTML = `<div class="q-result"><div class="big">${quiz.score} / ${quiz.queue.length}</div><p>Раунд закончен</p><button id="again">Ещё раз</button></div>`;
+      area.innerHTML = `<div class="q-result"><div class="big">${quiz.score} из ${quiz.queue.length}</div><p>Раунд закончен. Результаты учтены: слова, в которых ты ошибся, вернутся раньше.</p><button id="again">Ещё раунд</button></div>`;
       return;
     }
     const w = quiz.queue[quiz.i];
-    const progress = `<div class="q-progress">${quiz.i + 1} / ${quiz.queue.length}</div>`;
+    const progress = `<div class="q-bar"><span style="width:${(quiz.i / quiz.queue.length) * 100}%"></span></div><div class="q-count">${quiz.i + 1} из ${quiz.queue.length}</div>`;
 
     if (quiz.mode === 'cards') {
       area.innerHTML = progress + `
         <div class="q-card" id="qc"><div>${esc(front(w))}</div>
         ${quiz.revealed
           ? `<div class="ans">${esc(back(w))}</div>${w.context ? `<div class="ctx">${esc(w.context)}</div>` : ''}`
-          : '<small>нажми, чтобы увидеть ответ</small>'}
+          : '<small>Нажми на карточку, чтобы увидеть ответ</small>'}
         </div>
-        ${quiz.revealed ? '<div class="q-actions"><button class="btn-no" data-k="0">Не знал</button><button class="btn-yes" data-k="1">Знал</button></div>' : ''}`;
+        ${quiz.revealed
+          ? '<div class="q-actions"><button class="btn-no" data-k="0">Не знал</button><button class="btn-yes" data-k="1">Знал</button></div><div class="q-keys">Клавиши: стрелка влево или 0, стрелка вправо или 1</div>'
+          : '<div class="q-keys">Клавиша: пробел</div>'}`;
       return;
     }
 
@@ -516,8 +561,9 @@
     }
     area.innerHTML = progress + `
       <div class="q-card" style="cursor:default"><div>${esc(front(w))}</div></div>
-      <div class="opts">${quiz.options.map((o, i) => `<button class="opt" data-id="${esc(o.id)}"><b>${i + 1}</b>&nbsp; ${esc(back(o))}</button>`).join('')}</div>
-      <div class="q-actions hidden" id="next-row"><button id="next">Дальше</button></div>`;
+      <div class="opts">${quiz.options.map((o, i) => `<button class="opt" data-id="${esc(o.id)}"><b>${i + 1}</b><span>${esc(back(o))}</span></button>`).join('')}</div>
+      <div class="q-next hidden" id="next-row"><button id="next">Дальше</button></div>
+      <div class="q-keys">Клавиши 1–4 выбирают ответ, пробел ведёт дальше</div>`;
   }
 
   function grade(w, ok) {

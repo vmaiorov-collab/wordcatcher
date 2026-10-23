@@ -4,47 +4,62 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>Wordcatcher</title>
+  <title>Wordcatcher: английский через новости</title>
+  <meta name="description" content="Открой статью по ссылке, нажимай на незнакомые слова и повторяй их в квизе.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230d4a38'/%3E%3Cpath d='M10 11V9.5A1.5 1.5 0 0 1 11.5 8H13M19 8h1.5A1.5 1.5 0 0 1 22 9.5V11M22 21v1.5a1.5 1.5 0 0 1-1.5 1.5H19M13 24h-1.5A1.5 1.5 0 0 1 10 22.5V21' stroke='%23fff' fill='none' stroke-width='2' stroke-linecap='round'/%3E%3Crect x='12' y='14.5' width='8' height='3' rx='1.5' fill='%23e4f25c'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;0,7..72,700;1,7..72,400&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=2">
+  <link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400..700&family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,400..600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
-  <header class="top">
-    <div class="brand"><span>Wordcatcher</span></div>
-    <nav class="tabs" id="tabs">
-      <button data-view="read" class="active">Читать</button>
-      <button data-view="words">Слова <span class="badge" id="count">0</span></button>
-      <button data-view="quiz">Квиз</button>
-    </nav>
-    <label class="lang">
-      Перевод на
-      <select id="lang">
-        <option value="ru">русский</option>
-        <option value="uk">украинский</option>
-        <option value="es">испанский</option>
-        <option value="de">немецкий</option>
-        <option value="fr">французский</option>
-        <option value="it">итальянский</option>
-        <option value="pt">португальский</option>
-        <option value="tr">турецкий</option>
-        <option value="pl">польский</option>
-      </select>
-    </label>
+  <header class="top" id="top">
+    <div class="top-in">
+      <a class="brand" href="./" aria-label="Wordcatcher">
+        <svg class="logo" viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
+          <rect width="32" height="32" rx="9" style="fill:var(--accent)"/>
+          <path d="M10 11V9.5A1.5 1.5 0 0 1 11.5 8H13M19 8h1.5A1.5 1.5 0 0 1 22 9.5V11M22 21v1.5a1.5 1.5 0 0 1-1.5 1.5H19M13 24h-1.5A1.5 1.5 0 0 1 10 22.5V21" fill="none" stroke-width="2" stroke-linecap="round" style="stroke:var(--on-accent)"/>
+          <rect x="12" y="14.5" width="8" height="3" rx="1.5" style="fill:var(--mark-solid)"/>
+        </svg>
+        <span>wordcatcher</span>
+      </a>
+      <nav class="tabs" id="tabs" aria-label="Разделы">
+        <button data-view="read" class="active">Читать</button>
+        <button data-view="words">Словарь <span class="badge" id="count">0</span></button>
+        <button data-view="quiz">Квиз</button>
+      </nav>
+      <label class="lang">
+        <span>Перевод на</span>
+        <select id="lang" class="pick">
+          <option value="ru">русский</option>
+          <option value="uk">украинский</option>
+          <option value="es">испанский</option>
+          <option value="de">немецкий</option>
+          <option value="fr">французский</option>
+          <option value="it">итальянский</option>
+          <option value="pt">португальский</option>
+          <option value="tr">турецкий</option>
+          <option value="pl">польский</option>
+        </select>
+      </label>
+    </div>
   </header>
 
   <main>
     <!-- READ -->
-    <section id="view-read" class="view active">
+    <section id="view-read" class="view active is-demo">
       <div class="read-grid">
-        <div class="col-main">
+        <div class="hero-copy">
+          <h1 class="hero-title">Читай новости на английском и забирай слова себе</h1>
+          <p class="hero-sub">Вставь ссылку на статью. Нажми на незнакомое слово: перевод появится рядом, а слово попадёт в твой словарь и в квиз.</p>
+
           <form id="url-form" class="loader">
-            <input id="url" type="url" placeholder="Ссылка на статью: https://www.bbc.com/news/…" autocomplete="off" aria-label="Ссылка на статью">
-            <button type="submit" id="load-btn">Открыть</button>
+            <input id="url" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="bbc.com/news/…" autocomplete="off" aria-label="Ссылка на статью">
+            <button type="submit" id="load-btn">Открыть статью</button>
           </form>
           <div class="loader-sub">
             <button type="button" class="link" id="toggle-paste">Вставить текст вместо ссылки</button>
+            <span class="hero-note">Подойдёт BBC, The Guardian и другие англоязычные сайты.</span>
           </div>
           <form id="paste-form" class="paste hidden">
             <textarea id="paste-text" rows="6" placeholder="Вставь сюда текст статьи" aria-label="Текст статьи"></textarea>
@@ -52,16 +67,17 @@
           </form>
 
           <div id="status" class="status hidden" role="status"></div>
-
-          <article id="article" class="sheet">
-            <div class="meta" id="meta"></div>
-            <h1 id="title"></h1>
-            <div id="body" class="prose"></div>
-          </article>
         </div>
 
+        <article id="article" class="sheet">
+          <div class="meta" id="meta"></div>
+          <h2 id="title" class="art-title"></h2>
+          <div id="body" class="prose"></div>
+          <p class="demo-hint" id="demo-hint">Нажми на выделенное слово.</p>
+        </article>
+
         <aside id="margin" class="margin" aria-label="Слова из этой статьи">
-          <h2>Слова из статьи <span id="margin-count" class="margin-count"></span></h2>
+          <h3>Слова из статьи <span id="margin-count" class="margin-count"></span></h3>
           <p id="margin-empty" class="margin-empty">Нажми на слово в тексте, и оно появится здесь.</p>
           <ul id="margin-list" class="margin-list"></ul>
         </aside>
@@ -71,31 +87,40 @@
     <!-- WORDS -->
     <section id="view-words" class="view">
       <div class="page-head">
-        <h2>Мои слова</h2>
+        <div>
+          <h2>Словарь</h2>
+          <p class="page-sub" id="words-sub"></p>
+        </div>
         <div class="bar-actions">
-          <input id="search" type="search" placeholder="Поиск по словам" aria-label="Поиск по словам">
+          <input id="search" type="search" placeholder="Найти слово" aria-label="Найти слово">
           <button id="export" class="ghost">Скачать CSV</button>
-          <button id="clear" class="ghost danger">Очистить список</button>
+          <button id="clear" class="ghost danger">Очистить</button>
         </div>
       </div>
       <ul id="word-list" class="word-list"></ul>
-      <div id="empty-words" class="empty hidden"><p>Список пуст. Открой статью и нажми на слово.</p></div>
+      <div id="empty-words" class="empty hidden">
+        <h3>Здесь пока пусто</h3>
+        <p>Открой статью и нажми на слово, которое хочешь запомнить.</p>
+      </div>
     </section>
 
     <!-- QUIZ -->
     <section id="view-quiz" class="view">
       <div class="page-head">
-        <h2>Квиз</h2>
+        <div>
+          <h2>Квиз</h2>
+          <p class="page-sub">Раунд из десяти слов. Те, в которых ты чаще ошибаешься, попадаются чаще.</p>
+        </div>
         <div class="bar-actions">
-          <select id="quiz-mode" aria-label="Режим">
+          <select id="quiz-mode" class="pick" aria-label="Режим">
             <option value="cards">Карточки</option>
             <option value="choice">Выбор ответа</option>
           </select>
-          <select id="quiz-dir" aria-label="Направление">
-            <option value="fwd">Слово, затем перевод</option>
-            <option value="rev">Перевод, затем слово</option>
+          <select id="quiz-dir" class="pick" aria-label="Направление">
+            <option value="fwd">Английский, затем перевод</option>
+            <option value="rev">Перевод, затем английский</option>
           </select>
-          <button id="quiz-start">Начать</button>
+          <button id="quiz-start">Начать раунд</button>
         </div>
       </div>
       <div id="quiz-area" class="quiz-area"></div>
@@ -105,8 +130,12 @@
   <div id="popup" class="popup hidden" role="dialog" aria-label="Перевод">
     <div class="pop-head">
       <span id="pop-word" class="pop-word"></span>
-      <button id="pop-speak" class="icon" title="Произнести" aria-label="Произнести">🔊</button>
-      <button id="pop-close" class="icon" title="Закрыть" aria-label="Закрыть">✕</button>
+      <button id="pop-speak" class="icon" title="Произнести" aria-label="Произнести">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+      </button>
+      <button id="pop-close" class="icon" title="Закрыть" aria-label="Закрыть">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
     </div>
     <div id="pop-tr" class="pop-tr"></div>
     <div id="pop-ctx" class="pop-ctx"></div>
@@ -117,6 +146,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@mozilla/readability@0.5.0/Readability.js"></script>
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>
