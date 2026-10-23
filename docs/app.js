@@ -73,12 +73,11 @@
 
   // Works in two modes:
   //  1) with the Node server (npm start): /api/article and /api/translate are used;
-  //  2) on static hosting (GitHub Pages): the browser fetches the page through a public
-  //     CORS proxy, extracts the article with Readability and calls MyMemory directly.
-  const PROXIES = [
-    (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
-    (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
-  ];
+  //  2) on static hosting (GitHub Pages): the page is fetched through the Jina Reader
+  //     service (r.jina.ai, CORS-enabled, renders the page like a browser), the article is
+  //     extracted with Readability and MyMemory is called directly.
+  const READER = 'https://r.jina.ai/';
+  const PASTE_HINT = 'Нажми «Вставить текст вместо ссылки» и вставь текст статьи.';
 
   // Returns { ok, data } if a Wordcatcher server answered, or null on static hosting.
   async function serverJson(path, params) {
@@ -112,7 +111,9 @@
       }
       blocks.push({ type: tag === 'p' || tag === 'li' ? 'p' : 'h', text });
     });
-    if (!blocks.length) return null;
+    // a login wall or cookie page is not an article: it has a line or two of text
+    const wordCount = blocks.reduce((n, b) => n + b.text.split(/\s+/).length, 0);
+    if (blocks.filter((b) => b.type === 'p').length < 2 || wordCount < 50) return null;
     let host = '';
     try { host = new URL(pageUrl).hostname; } catch { /* ignore */ }
     return {
@@ -123,6 +124,44 @@
     };
   }
 
+  // Fallback when the page HTML has no recognisable article: use the reader's own markdown.
+  function articleFromMarkdown(md, pageUrl) {
+    const title = ((md.match(/^Title:\s*(.+)$/m) || [])[1] || '').trim();
+    const at = md.indexOf('Markdown Content:');
+    const text = at >= 0 ? md.slice(at + 'Markdown Content:'.length) : md;
+    const blocks = [];
+    text.split(/\n{2,}/).forEach((chunk) => {
+      let t = chunk
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/[*`>]+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!t) return;
+      const h = t.match(/^#{1,6}\s+(.+)$/);
+      if (h) {
+        if (h[1].trim() !== title) blocks.push({ type: 'h', text: h[1].trim() });
+        return;
+      }
+      t = t.replace(/^[-+•]\s+/, '');
+      if (t.split(' ').length < 6) return; // menus, captions, buttons
+      blocks.push({ type: 'p', text: t });
+    });
+    if (blocks.length < 2) return null;
+    let host = '';
+    try { host = new URL(pageUrl).hostname; } catch { /* ignore */ }
+    return { title, byline: '', site: host.replace(/^www\./, ''), blocks };
+  }
+
+  async function readerGet(url, headers) {
+    const slow = setTimeout(() => setStatus('Сайт отвечает медленно, подожди ещё немного…'), 7000);
+    try {
+      return await fetch(READER + url, { headers, signal: AbortSignal.timeout(30000) });
+    } finally {
+      clearTimeout(slow);
+    }
+  }
+
   async function fetchArticle(url) {
     const s = await serverJson('/api/article', { url });
     if (s) {
@@ -130,18 +169,32 @@
       return s.data;
     }
     if (!/^https?:\/\//i.test(url)) throw new Error('Это не похоже на ссылку.');
-    if (typeof Readability === 'undefined') {
-      throw new Error('Не загрузился модуль разбора статей. Проверь интернет или вставь текст вручную.');
-    }
-    for (const proxy of PROXIES) {
+
+    let status = 0;
+    // 1) the rendered page as HTML, then the same Readability extraction as on the server
+    if (typeof Readability !== 'undefined') {
       try {
-        const r = await fetch(proxy(url));
-        if (!r.ok) continue;
-        const a = extractClient(await r.text(), url);
-        if (a) return a;
-      } catch { /* try the next proxy */ }
+        const r = await readerGet(url, { 'X-Return-Format': 'html' });
+        status = r.status;
+        if (r.ok) {
+          const a = extractClient(await r.text(), url);
+          if (a) return a;
+        }
+      } catch { /* fall through to markdown */ }
     }
-    throw new Error('Не удалось загрузить статью. Нажми «или вставить текст вручную» и вставь текст.');
+    // 2) the reader's own clean-text version
+    try {
+      const r = await readerGet(url);
+      status = r.status;
+      if (r.ok) {
+        const a = articleFromMarkdown(await r.text(), url);
+        if (a) return a;
+      }
+    } catch { /* fall through to the error */ }
+
+    if (status === 429) throw new Error('Сервис загрузки сейчас перегружен. Попробуй через минуту. ' + PASTE_HINT);
+    if (status === 401 || status === 403 || status === 402) throw new Error('Сайт не отдаёт статью без входа или подписки. ' + PASTE_HINT);
+    throw new Error('Не удалось загрузить статью. Проверь ссылку. ' + PASTE_HINT);
   }
 
   $('#toggle-paste').addEventListener('click', () => $('#paste-form').classList.toggle('hidden'));

@@ -61,7 +61,9 @@ function extractArticle(html, pageUrl) {
     }
     blocks.push({ type: tag === 'p' || tag === 'li' ? 'p' : 'h', text });
   });
-  if (!blocks.length) return null;
+  // a login wall or cookie page is not an article: it has a line or two of text
+  const wordCount = blocks.reduce((n, b) => n + b.text.split(/\s+/).length, 0);
+  if (blocks.filter((b) => b.type === 'p').length < 2 || wordCount < 50) return null;
 
   return {
     title: (article.title || '').trim(),
