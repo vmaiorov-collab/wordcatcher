@@ -3,12 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>Wordcatcher</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;0,7..72,700;1,7..72,400&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="top">
-    <div class="brand">Word<span>catcher</span></div>
+    <div class="brand"><span>Wordcatcher</span></div>
     <nav class="tabs" id="tabs">
       <button data-view="read" class="active">Читать</button>
       <button data-view="words">Слова <span class="badge" id="count">0</span></button>
@@ -17,15 +21,15 @@
     <label class="lang">
       Перевод на
       <select id="lang">
-        <option value="ru">Русский</option>
-        <option value="uk">Українська</option>
-        <option value="es">Español</option>
-        <option value="de">Deutsch</option>
-        <option value="fr">Français</option>
-        <option value="it">Italiano</option>
-        <option value="pt">Português</option>
-        <option value="tr">Türkçe</option>
-        <option value="pl">Polski</option>
+        <option value="ru">русский</option>
+        <option value="uk">украинский</option>
+        <option value="es">испанский</option>
+        <option value="de">немецкий</option>
+        <option value="fr">французский</option>
+        <option value="it">итальянский</option>
+        <option value="pt">португальский</option>
+        <option value="tr">турецкий</option>
+        <option value="pl">польский</option>
       </select>
     </label>
   </header>
@@ -33,58 +37,63 @@
   <main>
     <!-- READ -->
     <section id="view-read" class="view active">
-      <form id="url-form" class="loader">
-        <input id="url" type="url" placeholder="Вставь ссылку на статью, например https://www.bbc.com/news/..." autocomplete="off">
-        <button type="submit" id="load-btn">Загрузить</button>
-      </form>
-      <div class="loader-sub">
-        <button type="button" class="link" id="toggle-paste">или вставить текст вручную</button>
-      </div>
-      <form id="paste-form" class="paste hidden">
-        <textarea id="paste-text" rows="6" placeholder="Вставь сюда текст статьи"></textarea>
-        <button type="submit">Показать текст</button>
-      </form>
+      <div class="read-grid">
+        <div class="col-main">
+          <form id="url-form" class="loader">
+            <input id="url" type="url" placeholder="Ссылка на статью: https://www.bbc.com/news/…" autocomplete="off" aria-label="Ссылка на статью">
+            <button type="submit" id="load-btn">Открыть</button>
+          </form>
+          <div class="loader-sub">
+            <button type="button" class="link" id="toggle-paste">Вставить текст вместо ссылки</button>
+          </div>
+          <form id="paste-form" class="paste hidden">
+            <textarea id="paste-text" rows="6" placeholder="Вставь сюда текст статьи" aria-label="Текст статьи"></textarea>
+            <button type="submit">Показать текст</button>
+          </form>
 
-      <div id="status" class="status hidden"></div>
+          <div id="status" class="status hidden" role="status"></div>
 
-      <article id="article" class="article hidden">
-        <div class="meta" id="meta"></div>
-        <h1 id="title"></h1>
-        <div id="body"></div>
-      </article>
+          <article id="article" class="sheet">
+            <div class="meta" id="meta"></div>
+            <h1 id="title"></h1>
+            <div id="body" class="prose"></div>
+          </article>
+        </div>
 
-      <div id="empty-read" class="empty">
-        <p>Вставь ссылку на статью (BBC, The Guardian и т.д.).</p>
-        <p>Нажми на слово или выдели фразу, и увидишь перевод. Слово сразу попадёт в твой список.</p>
+        <aside id="margin" class="margin" aria-label="Слова из этой статьи">
+          <h2>Слова из статьи <span id="margin-count" class="margin-count"></span></h2>
+          <p id="margin-empty" class="margin-empty">Нажми на слово в тексте, и оно появится здесь.</p>
+          <ul id="margin-list" class="margin-list"></ul>
+        </aside>
       </div>
     </section>
 
     <!-- WORDS -->
     <section id="view-words" class="view">
-      <div class="bar">
+      <div class="page-head">
         <h2>Мои слова</h2>
         <div class="bar-actions">
-          <input id="search" type="search" placeholder="Поиск">
+          <input id="search" type="search" placeholder="Поиск по словам" aria-label="Поиск по словам">
           <button id="export" class="ghost">Скачать CSV</button>
-          <button id="clear" class="ghost danger">Очистить всё</button>
+          <button id="clear" class="ghost danger">Очистить список</button>
         </div>
       </div>
       <ul id="word-list" class="word-list"></ul>
-      <div id="empty-words" class="empty hidden"><p>Пока пусто. Открой статью и нажми на слово.</p></div>
+      <div id="empty-words" class="empty hidden"><p>Список пуст. Открой статью и нажми на слово.</p></div>
     </section>
 
     <!-- QUIZ -->
     <section id="view-quiz" class="view">
-      <div class="bar">
+      <div class="page-head">
         <h2>Квиз</h2>
         <div class="bar-actions">
-          <select id="quiz-mode">
+          <select id="quiz-mode" aria-label="Режим">
             <option value="cards">Карточки</option>
             <option value="choice">Выбор ответа</option>
           </select>
-          <select id="quiz-dir">
-            <option value="fwd">Слово → перевод</option>
-            <option value="rev">Перевод → слово</option>
+          <select id="quiz-dir" aria-label="Направление">
+            <option value="fwd">Слово, затем перевод</option>
+            <option value="rev">Перевод, затем слово</option>
           </select>
           <button id="quiz-start">Начать</button>
         </div>
@@ -93,11 +102,11 @@
     </section>
   </main>
 
-  <div id="popup" class="popup hidden" role="dialog">
+  <div id="popup" class="popup hidden" role="dialog" aria-label="Перевод">
     <div class="pop-head">
       <span id="pop-word" class="pop-word"></span>
-      <button id="pop-speak" class="icon" title="Произношение">🔊</button>
-      <button id="pop-close" class="icon" title="Закрыть">✕</button>
+      <button id="pop-speak" class="icon" title="Произнести" aria-label="Произнести">🔊</button>
+      <button id="pop-close" class="icon" title="Закрыть" aria-label="Закрыть">✕</button>
     </div>
     <div id="pop-tr" class="pop-tr"></div>
     <div id="pop-ctx" class="pop-ctx"></div>

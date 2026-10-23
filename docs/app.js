@@ -15,6 +15,19 @@
 
   let words = store.get('wc_words', []);
   let lang = store.get('wc_lang', 'ru');
+  let currentSrc = ''; // which article is open: its URL, 'paste' or 'demo'
+
+  const DEMO = {
+    src: 'demo',
+    title: 'Tap any word',
+    site: 'Пример',
+    byline: 'нажми на любое слово, чтобы увидеть перевод',
+    blocks: [
+      { type: 'p', text: 'Reading the news is one of the quickest ways to pick up a language. The vocabulary is current, the sentences are real, and every article gives you something unfamiliar to chase down.' },
+      { type: 'p', text: 'Click a word and its translation appears next to it. Select a few words together and you can translate a whole phrase.' },
+      { type: 'p', text: "Everything you click is saved to your list, so tonight's reading becomes tomorrow's quiz." },
+    ],
+  };
 
   const saveWords = () => { store.set('wc_words', words); $('#count').textContent = words.length; };
   const esc = (s) => { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
@@ -38,6 +51,7 @@
     lang = e.target.value;
     store.set('wc_lang', lang);
     closePopup();
+    renderMargin();
     quizIntro();
   });
 
@@ -134,6 +148,7 @@
     setStatus('Загружаю статью…');
     try {
       const d = await fetchArticle(url);
+      d.src = url;
       setStatus('');
       renderArticle(d);
       store.set('wc_article', d);
@@ -149,14 +164,15 @@
     const text = $('#paste-text').value.trim();
     if (!text) return;
     const blocks = text.split(/\n+/).map((t) => t.trim()).filter(Boolean).map((t) => ({ type: 'p', text: t }));
-    const d = { title: 'Вставленный текст', byline: '', site: '', blocks };
+    const d = { src: 'paste', title: 'Вставленный текст', byline: '', site: '', blocks };
     renderArticle(d);
     store.set('wc_article', d);
   });
 
   function renderArticle(a) {
     closePopup();
-    $('#meta').textContent = [a.site, a.byline].filter(Boolean).join(' · ');
+    currentSrc = a.src || '';
+    $('#meta').textContent = [a.site, a.byline].filter(Boolean).join(', ');
     $('#title').textContent = a.title || '';
     body.innerHTML = '';
     const re = /\p{L}+(?:['’-]\p{L}+)*/gu;
@@ -177,16 +193,36 @@
       if (last < b.text.length) el.append(b.text.slice(last));
       body.append(el);
     });
-    $('#article').classList.remove('hidden');
-    $('#empty-read').classList.add('hidden');
     refreshHighlights();
-    window.scrollTo({ top: 0 });
+    if (a.src !== 'demo') window.scrollTo({ top: 0 });
   }
 
   function refreshHighlights() {
     const keys = new Set(words.map((w) => w.key));
     body.querySelectorAll('.w').forEach((s) => s.classList.toggle('saved', keys.has(s.textContent.toLowerCase())));
+    renderMargin();
   }
+
+  // words saved from the open article, shown beside the text
+  function renderMargin() {
+    const list = words.filter((w) => w.src === currentSrc && w.lang === lang);
+    $('#margin-count').textContent = list.length || '';
+    $('#margin-empty').classList.toggle('hidden', list.length > 0);
+    $('#margin-list').innerHTML = list.map((w) => `
+      <li>
+        <div><span class="m-w">${esc(w.text)}</span><span class="m-t">${esc(w.tr)}</span></div>
+        <button class="m-x" data-id="${esc(w.id)}" title="Убрать из списка" aria-label="Убрать из списка">✕</button>
+      </li>`).join('');
+  }
+
+  $('#margin-list').addEventListener('click', (e) => {
+    const b = e.target.closest('.m-x');
+    if (!b) return;
+    words = words.filter((w) => w.id !== b.dataset.id);
+    saveWords();
+    closePopup();
+    refreshHighlights();
+  });
 
   // ---------- selecting words ----------
   function sentenceAround(text, i) {
@@ -363,7 +399,7 @@
     if (words.some((w) => w.key === c.key && w.lang === lang)) return;
     words.unshift({
       id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-      key: c.key, text: c.text, tr: c.tr, context: c.context || '', lang,
+      key: c.key, text: c.text, tr: c.tr, context: c.context || '', lang, src: currentSrc,
       added: Date.now(), right: 0, wrong: 0,
     });
     saveWords();
@@ -548,5 +584,5 @@
   // ---------- init ----------
   saveWords();
   const saved = store.get('wc_article', null);
-  if (saved && saved.blocks) renderArticle(saved);
+  renderArticle(saved && saved.blocks ? saved : DEMO);
 })();
