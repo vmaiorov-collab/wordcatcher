@@ -40,21 +40,78 @@ async function assertPublicUrl(raw) {
   return url;
 }
 
+// Skip tracking pixels, icons and logos by their file path, not by words inside names ("silicon").
+const JUNK_IMG = /(^|[\/_.-])(pixel|spacer|blank|1x1|tracking|beacon|sprite|logo|icons?|avatar|favicon|emoji)([\/_.-]|$)/i;
+
+function absUrl(u, base) {
+  try {
+    const x = new URL(u, base);
+    if (x.protocol === 'http:') x.protocol = 'https:'; // http images are blocked on an https page
+    return x.protocol === 'https:' ? x.href : '';
+  } catch {
+    return '';
+  }
+}
+
+const usableImage = (src) => !!src && !/\.svg(\?|$)/i.test(src) && !JUNK_IMG.test(src.split('?')[0]);
+
+// From a srcset take the smallest picture that is at least 800px wide, else the largest.
+function pickSrcset(set) {
+  const items = set
+    .split(/,\s+/)
+    .map((x) => x.trim().split(/\s+/))
+    .filter((a) => a[0])
+    .map(([u, d]) => ({
+      u,
+      w: /w$/.test(d || '') ? parseInt(d, 10) : /x$/.test(d || '') ? parseFloat(d) * 400 : 0,
+    }));
+  if (!items.length) return '';
+  const big = items.filter((i) => i.w >= 800).sort((a, b) => a.w - b.w)[0];
+  return (big || items.sort((a, b) => b.w - a.w)[0]).u;
+}
+
+function imageBlock(img, caption, base) {
+  const attr = (n) => img.getAttribute(n) || '';
+  const raw = [pickSrcset(attr('srcset') || attr('data-srcset')), attr('data-src'), attr('data-lazy-src'), attr('data-original'), attr('src')].find(
+    (c) => c && !/^data:/i.test(c)
+  );
+  const src = raw ? absUrl(raw, base) : '';
+  if (!usableImage(src)) return null;
+  const w = parseInt(attr('width'), 10) || 0;
+  const h = parseInt(attr('height'), 10) || 0;
+  if ((w && w < 120) || (h && h < 80)) return null;
+  return { type: 'img', src, alt: attr('alt').trim(), caption: (caption || '').replace(/\s+/g, ' ').trim(), w, h };
+}
+
+const imgStem = (u) => u.split('?')[0].split('/').pop().replace(/(\.[a-z0-9]+)+$/i, '');
+
 function extractArticle(html, pageUrl) {
   const dom = new JSDOM(html, { url: pageUrl, virtualConsole: new VirtualConsole() });
+  const meta = dom.window.document.querySelector('meta[property="og:image"], meta[name="twitter:image"]');
+  const metaImg = ((meta && meta.getAttribute('content')) || '').trim();
   const article = new Readability(dom.window.document).parse();
   if (!article || !article.content) return null;
 
   const content = new JSDOM(article.content).window.document;
+  const norm = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const blocks = [];
-  content.querySelectorAll('h1,h2,h3,h4,p,li').forEach((el) => {
+  content.querySelectorAll('h1,h2,h3,h4,p,li,figure,img').forEach((el) => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'figure' || tag === 'img') {
+      if (tag === 'img' && el.closest('figure')) return; // handled with its figure
+      const img = tag === 'img' ? el : el.querySelector('img');
+      if (!img) return;
+      const cap = tag === 'figure' ? (el.querySelector('figcaption') || {}).textContent || '' : '';
+      const b = imageBlock(img, cap, pageUrl);
+      if (b) blocks.push(b);
+      return;
+    }
+    if (el.closest('figure')) return; // captions travel with their picture
     const text = el.textContent.replace(/\s+/g, ' ').trim();
     if (!text) return;
-    const tag = el.tagName.toLowerCase();
     if (tag === 'h1') return; // the title is shown separately
-    if (!blocks.length && /^h\d$/.test(tag)) {
+    if (!blocks.some((b) => b.type !== 'img') && /^h\d$/.test(tag)) {
       // Readability turns the page h1 into h2; drop it if it repeats the title
-      const norm = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
       const t = norm(article.title || '');
       const h = norm(text);
       if (t && h && (t.includes(h) || h.includes(t))) return;
@@ -62,8 +119,14 @@ function extractArticle(html, pageUrl) {
     blocks.push({ type: tag === 'p' || tag === 'li' ? 'p' : 'h', text });
   });
   // a login wall or cookie page is not an article: it has a line or two of text
-  const wordCount = blocks.reduce((n, b) => n + b.text.split(/\s+/).length, 0);
+  const wordCount = blocks.reduce((n, b) => n + (b.text ? b.text.split(/\s+/).length : 0), 0);
   if (blocks.filter((b) => b.type === 'p').length < 2 || wordCount < 50) return null;
+
+  // the main picture usually sits outside the article body: take it from the page's share image
+  const lead = metaImg ? absUrl(metaImg, pageUrl) : '';
+  if (usableImage(lead) && !blocks.slice(0, 3).some((b) => b.type === 'img' && imgStem(b.src) === imgStem(lead))) {
+    blocks.unshift({ type: 'img', src: lead, alt: (article.title || '').trim(), caption: '', w: 0, h: 0, lead: true });
+  }
 
   return {
     title: (article.title || '').trim(),

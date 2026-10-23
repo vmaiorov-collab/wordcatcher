@@ -216,6 +216,15 @@ main { max-width: 1200px; margin: 0 auto; padding: 0 40px 128px; }
 .prose p { margin: 0 0 1.2em; }
 .prose h3 { font: 600 1.25em/1.3 var(--serif); letter-spacing: -0.01em; margin: 2em 0 0.6em; }
 
+/* pictures that come with the article */
+.prose .fig { margin: 2em 0; }
+.prose .fig img {
+  display: block; width: 100%; height: auto; min-height: 120px;
+  border-radius: 14px; background: var(--line); object-fit: cover;
+}
+.prose .fig.lead { margin: 0 0 2.2em; }
+.prose figcaption { font: 400 14px/1.5 var(--sans); color: var(--muted); margin-top: 12px; text-wrap: pretty; }
+
 /* words in the text */
 .w { cursor: pointer; border-radius: 3px; padding: 0 0.06em; margin: 0 -0.06em; transition: background-color 0.15s; }
 .w:hover { background-color: var(--accent-soft); }
