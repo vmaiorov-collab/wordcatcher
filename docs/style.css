@@ -273,6 +273,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 0 40px 128px; }
 .pop-word { font: 600 24px/1.15 var(--serif); letter-spacing: -0.012em; margin-right: auto; word-break: break-word; }
 .pop-tr { font: 600 20px/1.3 var(--sans); color: var(--accent); margin: 8px 0 12px; min-height: 26px; word-break: break-word; }
 .pop-tr.loading { color: var(--faint); font-weight: 400; }
+.pop-alt { font-size: 13px; line-height: 1.4; color: var(--muted); margin: -6px 0 12px; }
+.wl-alt { color: var(--muted); font-size: 14px; margin-top: 2px; }
 .pop-tr.err { color: var(--bad); font-size: 14px; font-weight: 400; }
 .pop-ctx {
   font: italic 400 14.5px/1.55 var(--serif); color: var(--muted);

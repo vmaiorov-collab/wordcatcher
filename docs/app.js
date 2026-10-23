@@ -433,26 +433,60 @@
   let anchor = null;
 
   const trCache = new Map();
+  const hasLetters = (str) => /\p{L}/u.test(str || '');
 
-  async function translate(text) {
-    const key = lang + '|' + text.toLowerCase();
+  // Google's public web endpoint: accurate for single words and gives other meanings by part of speech.
+  async function googleTranslate(text, to) {
+    const p = new URLSearchParams({ client: 'gtx', sl: 'en', tl: to, q: text });
+    p.append('dt', 't');
+    p.append('dt', 'bd');
+    const r = await fetch('https://translate.googleapis.com/translate_a/single?' + p, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error('google ' + r.status);
+    const d = await r.json();
+    const main = (d[0] || []).map((x) => x[0]).join('').trim();
+    if (!hasLetters(main)) throw new Error('empty');
+    const alts = [];
+    if (!/\s/.test(text)) {
+      (d[1] || []).forEach((g) => (g[1] || []).forEach((a) => {
+        if (a.toLowerCase() !== main.toLowerCase() && !alts.includes(a)) alts.push(a);
+      }));
+    }
+    return { tr: main, alts: alts.slice(0, 3) };
+  }
+
+  // Backup: a translation memory built from other people's texts, so single words can come back odd.
+  async function myMemoryTranslate(text, to) {
+    const r = await fetch('https://api.mymemory.translated.net/get?' + new URLSearchParams({ q: text, langpair: 'en|' + to }), { signal: AbortSignal.timeout(10000) });
+    const d = await r.json();
+    let t = d && d.responseData && d.responseData.translatedText;
+    if (Number(d && d.responseStatus) !== 200 || /MYMEMORY WARNING/i.test(t || '')) throw new Error('quota');
+    if (!hasLetters(t)) t = ((d.matches || []).find((m) => hasLetters(m.translation)) || {}).translation; // the top match can be a stray "."
+    if (!hasLetters(t)) throw new Error('empty');
+    if (text === text.toLowerCase()) t = t.toLowerCase();
+    return { tr: t, alts: [] };
+  }
+
+  async function translate(text, to = lang) {
+    const key = to + '|' + text.toLowerCase();
     if (trCache.has(key)) return trCache.get(key);
-    let t;
-    const s = await serverJson('/api/translate', { q: text, from: 'en', to: lang });
+    let res;
+    const s = await serverJson('/api/translate', { q: text, from: 'en', to });
     if (s) {
       if (!s.ok) throw new Error(s.data.error || 'Ошибка перевода');
-      t = s.data.translation;
+      res = { tr: s.data.translation, alts: s.data.alts || [] };
     } else {
-      const r = await fetch('https://api.mymemory.translated.net/get?' + new URLSearchParams({ q: text, langpair: 'en|' + lang }));
-      const d = await r.json();
-      t = d && d.responseData && d.responseData.translatedText;
-      if (!t || Number(d.responseStatus) !== 200 || /MYMEMORY WARNING/i.test(t)) {
-        throw new Error('Сервис перевода недоступен или исчерпан дневной лимит.');
+      try {
+        res = await googleTranslate(text, to);
+      } catch {
+        try {
+          res = await myMemoryTranslate(text, to);
+        } catch {
+          throw new Error('Не удалось получить перевод. Проверь интернет и нажми «Повторить».');
+        }
       }
-      if (text === text.toLowerCase()) t = t.toLowerCase();
     }
-    trCache.set(key, t);
-    return t;
+    trCache.set(key, res);
+    return res;
   }
 
   function closePopup() {
@@ -463,7 +497,7 @@
 
   function positionPopup() {
     if (!anchor) return;
-    const w = 280;
+    const w = popup.offsetWidth || 320;
     const h = popup.offsetHeight;
     let left = anchor.left + anchor.width / 2 - w / 2;
     left = Math.max(window.scrollX + 8, Math.min(left, window.scrollX + window.innerWidth - w - 8));
@@ -483,6 +517,9 @@
     if (c.status === 'loading') { tr.textContent = 'Перевожу…'; tr.classList.add('loading'); }
     else if (c.status === 'error') { tr.textContent = c.error; tr.classList.add('err'); }
     else tr.textContent = c.tr;
+    const alt = $('#pop-alt');
+    alt.textContent = c.status === 'ok' && c.alts && c.alts.length ? 'Ещё: ' + c.alts.join(', ') : '';
+    alt.classList.toggle('hidden', !alt.textContent);
 
     const inList = words.some((w) => w.key === c.key && w.lang === lang);
     $('#pop-state').innerHTML = inList ? ICON_CHECK + 'В словаре' : '';
@@ -501,21 +538,29 @@
       width: rect.width,
     };
     const key = text.toLowerCase();
-    current = { text, key, context, tr: '', status: 'loading', error: '' };
+    current = { text, key, context, tr: '', alts: [], status: 'loading', error: '' };
     popup.classList.remove('hidden');
 
-    const existing = words.find((w) => w.key === key && w.lang === lang);
+    let existing = words.find((w) => w.key === key && w.lang === lang);
+    if (existing && !hasLetters(existing.tr)) {
+      // an old entry saved with a stray "." as its translation: drop it and translate again
+      words = words.filter((w) => w !== existing);
+      saveWords();
+      existing = null;
+    }
     if (existing) {
       current.tr = existing.tr;
+      current.alts = existing.alts || [];
       current.status = 'ok';
       renderPopup();
       return;
     }
     renderPopup();
     try {
-      const tr = await translate(text);
+      const res = await translate(text);
       if (token !== popupToken) return;
-      current.tr = tr;
+      current.tr = res.tr;
+      current.alts = res.alts;
       current.status = 'ok';
       addWord(current);
       renderPopup();
@@ -552,7 +597,7 @@
     if (words.some((w) => w.key === c.key && w.lang === lang)) return;
     words.unshift({
       id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-      key: c.key, text: c.text, tr: c.tr, context: c.context || '', lang, src: currentSrc,
+      key: c.key, text: c.text, tr: c.tr, alts: c.alts || [], v: 2, context: c.context || '', lang, src: currentSrc,
       added: Date.now(), right: 0, wrong: 0,
     });
     saveWords();
@@ -589,6 +634,7 @@
       <li>
         <div class="wl-word">${esc(w.text)}</div>
         <div class="wl-tr">${esc(w.tr)}</div>
+        ${w.alts && w.alts.length ? `<div class="wl-alt">Ещё: ${esc(w.alts.join(', '))}</div>` : ''}
         ${w.context ? `<div class="wl-ctx">${esc(w.context)}</div>` : ''}
         <div class="wl-side">
           <span class="wl-meta">${esc(meta)}</span>
@@ -764,7 +810,28 @@
   });
 
   // ---------- init ----------
+  // Words saved by earlier versions came from a translation memory that returned stray
+  // punctuation and odd phrases for single words: translate them again, once.
+  async function upgradeWords() {
+    const todo = words.filter((w) => w.v !== 2).slice(0, 40);
+    for (const w of todo) {
+      try {
+        const res = await translate(w.text, w.lang);
+        w.tr = res.tr;
+        w.alts = res.alts;
+        w.v = 2;
+      } catch {
+        break; // no network or the service is down: try again on the next visit
+      }
+      saveWords();
+      renderMargin();
+      if ($('#view-words').classList.contains('active')) renderWords();
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+
   updateCount(); // reading must never rewrite the saved list
   const saved = store.get('wc_article', null);
   renderArticle(saved && saved.blocks ? saved : DEMO);
+  upgradeWords();
 })();

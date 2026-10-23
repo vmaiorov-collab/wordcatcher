@@ -160,6 +160,43 @@ app.get('/api/article', async (req, res) => {
   }
 });
 
+const hasLetters = (t) => /\p{L}/u.test(t || '');
+
+// Google's public web endpoint (unofficial, no key): good single-word quality plus other meanings.
+async function googleTranslate(q, from, to) {
+  const p = new URLSearchParams({ client: 'gtx', sl: from, tl: to, q });
+  p.append('dt', 't');
+  p.append('dt', 'bd');
+  const r = await fetch(`https://translate.googleapis.com/translate_a/single?${p}`, { signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error(`google ${r.status}`);
+  const d = await r.json();
+  const translation = (d[0] || []).map((x) => x[0]).join('').trim();
+  if (!hasLetters(translation)) throw new Error('empty');
+  const alts = [];
+  if (!/\s/.test(q)) {
+    (d[1] || []).forEach((g) => (g[1] || []).forEach((a) => {
+      if (a.toLowerCase() !== translation.toLowerCase() && !alts.includes(a)) alts.push(a);
+    }));
+  }
+  return { translation, alts: alts.slice(0, 3) };
+}
+
+// Backup. It is a translation memory, so it can answer with stray punctuation: skip such answers.
+async function myMemoryTranslate(q, from, to) {
+  const params = new URLSearchParams({ q, langpair: `${from}|${to}` });
+  if (MYMEMORY_EMAIL) params.set('de', MYMEMORY_EMAIL);
+  const r = await fetch(`https://api.mymemory.translated.net/get?${params}`, { signal: AbortSignal.timeout(10000) });
+  const data = await r.json();
+  let t = data && data.responseData && data.responseData.translatedText;
+  if (Number(data && data.responseStatus) !== 200 || /MYMEMORY WARNING/i.test(t || '')) {
+    throw new Error('Translation service is unavailable or the daily limit is reached.');
+  }
+  if (!hasLetters(t)) t = ((data.matches || []).find((m) => hasLetters(m.translation)) || {}).translation;
+  if (!hasLetters(t)) throw new Error('No usable translation came back. Try again.');
+  if (q === q.toLowerCase()) t = t.toLowerCase();
+  return { translation: t, alts: [] };
+}
+
 const cache = new Map();
 
 app.get('/api/translate', async (req, res) => {
@@ -172,22 +209,11 @@ app.get('/api/translate', async (req, res) => {
     if (!langOk.test(from) || !langOk.test(to)) throw new Error('Bad language code.');
 
     const key = `${from}|${to}|${q.toLowerCase()}`;
-    if (cache.has(key)) return res.json({ translation: cache.get(key) });
+    if (cache.has(key)) return res.json(cache.get(key));
 
-    const params = new URLSearchParams({ q, langpair: `${from}|${to}` });
-    if (MYMEMORY_EMAIL) params.set('de', MYMEMORY_EMAIL);
-    const r = await fetch(`https://api.mymemory.translated.net/get?${params}`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    const data = await r.json();
-    let t = data && data.responseData && data.responseData.translatedText;
-    if (!t || Number(data.responseStatus) !== 200 || /MYMEMORY WARNING/i.test(t)) {
-      throw new Error('Translation service is unavailable or the daily limit is reached.');
-    }
-    // MyMemory sometimes echoes upper-case when the query was upper-case
-    if (q === q.toLowerCase()) t = t.toLowerCase();
-    cache.set(key, t);
-    res.json({ translation: t });
+    const out = (await googleTranslate(q, from, to).catch(() => null)) || (await myMemoryTranslate(q, from, to));
+    cache.set(key, out);
+    res.json(out);
   } catch (e) {
     res.status(502).json({ error: e.message || 'Translation failed.' });
   }
@@ -199,4 +225,4 @@ if (require.main === module) {
   app.listen(PORT, () => console.log(`Wordcatcher is running: http://localhost:${PORT}`));
 }
 
-module.exports = { extractArticle, isPrivateIp };
+module.exports = { extractArticle, isPrivateIp, googleTranslate, myMemoryTranslate };
