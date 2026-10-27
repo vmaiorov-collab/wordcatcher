@@ -779,9 +779,21 @@
   }
 
   // ---------- words list ----------
-  function renderWords() {
+  let wordsFilter = 'all';
+  const ICON_TARGET = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>';
+  const visibleWords = () => {
     const q = $('#search').value.trim().toLowerCase();
-    const list = words.filter((w) => !q || w.key.includes(q) || w.tr.toLowerCase().includes(q));
+    return words.filter((w) => (!q || w.key.includes(q) || w.tr.toLowerCase().includes(q)) && (wordsFilter === 'all' || w.check));
+  };
+
+  function renderWords() {
+    const list = visibleWords();
+    const marked = words.filter((w) => w.check).length;
+    $('#words-filter').classList.toggle('hidden', words.length === 0);
+    $('#f-all').textContent = words.length;
+    $('#f-check').textContent = marked;
+    document.querySelectorAll('#words-filter .seg button').forEach((b) => b.classList.toggle('on', b.dataset.f === wordsFilter));
+    $('#unmark-all').classList.toggle('hidden', marked === 0);
     $('#empty-words').classList.toggle('hidden', words.length > 0);
     $('#words-sub').textContent = words.length
       ? `${words.length} ${plural(words.length, ['слово', 'слова', 'слов'])} из прочитанных статей`
@@ -799,19 +811,40 @@
       const dots = [0, 1, 2].map((i) => `<i class="${i < level ? 'on' : ''}"></i>`).join('');
       const meta = [where(w.src), when(w.added)].filter(Boolean).join(', ');
       return `
-      <li>
+      <li class="${w.check ? 'marked' : ''}">
         <div class="wl-word">${esc(w.text)}${sayBtn(w.text)}${w.ipa ? `<span class="wl-ipa">${esc(w.ipa)}</span>` : ''}</div>
         <div class="wl-tr">${esc(w.tr)}</div>
         ${w.alts && w.alts.length ? `<div class="wl-alt">Ещё: ${esc(w.alts.join(', '))}</div>` : ''}
         ${w.context ? `<div class="wl-ctx">${esc(w.context)}</div>` : ''}
         <div class="wl-side">
+          <button class="wl-check${w.check ? ' on' : ''}" data-id="${esc(w.id)}" aria-pressed="${w.check ? 'true' : 'false'}">${w.check ? ICON_CHECK + 'На проверке' : ICON_TARGET + 'На проверку'}</button>
           <span class="wl-meta">${esc(meta)}</span>
           <span class="dots" title="Освоено на ${level} из 3" aria-label="Освоено на ${level} из 3">${dots}</span>
           <button class="wl-del icon" data-id="${esc(w.id)}" title="Удалить" aria-label="Удалить">${ICON_X}</button>
         </div>
       </li>`;
     }).join('');
+    if (!list.length && words.length) {
+      $('#word-list').innerHTML = `<li class="wl-none"><div class="empty"><h3>${wordsFilter === 'check' ? 'Нет слов на проверку' : 'Ничего не нашлось'}</h3><p>${wordsFilter === 'check' ? 'Нажми «На проверку» у слов во вкладке «Все», и квиз будет спрашивать только их.' : 'Попробуй другое слово.'}</p></div></li>`;
+    }
   }
+
+  document.querySelector('#words-filter .seg').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-f]');
+    if (!b) return;
+    wordsFilter = b.dataset.f;
+    renderWords();
+  });
+  $('#mark-all').addEventListener('click', () => {
+    visibleWords().forEach((w) => { w.check = true; });
+    saveWords();
+    renderWords();
+  });
+  $('#unmark-all').addEventListener('click', () => {
+    words.forEach((w) => { delete w.check; });
+    saveWords();
+    renderWords();
+  });
 
   function plural(n, forms) {
     const m10 = n % 10, m100 = n % 100;
@@ -822,6 +855,12 @@
 
   $('#search').addEventListener('input', renderWords);
   $('#word-list').addEventListener('click', (e) => {
+    const c = e.target.closest('.wl-check');
+    if (c) {
+      const w = words.find((x) => x.id === c.dataset.id);
+      if (w) { if (w.check) delete w.check; else w.check = true; saveWords(); renderWords(); }
+      return;
+    }
     const b = e.target.closest('.wl-del');
     if (!b) return;
     words = words.filter((w) => w.id !== b.dataset.id);
@@ -850,14 +889,32 @@
   // ---------- quiz ----------
   const area = $('#quiz-area');
   let quiz = null;
-  const pool = () => words.filter((w) => w.lang === lang);
+  const allPool = () => words.filter((w) => w.lang === lang);
+  const pool = () => ($('#quiz-set').value === 'check' ? allPool().filter((w) => w.check) : allPool());
+
+  const qs = store.get('wc_quiz', {});
+  ['set', 'mode', 'dir'].forEach((k) => { if (qs[k]) $('#quiz-' + k).value = qs[k]; });
+  function syncQuizControls() {
+    const marked = allPool().filter((w) => w.check).length;
+    $('#quiz-set').options[0].textContent = `На проверку (${marked})`;
+    $('#quiz-set').options[1].textContent = `Все слова (${allPool().length})`;
+    $('#quiz-dir').classList.toggle('hidden', $('#quiz-mode').value === 'write'); // typing is always rus → eng
+    store.set('wc_quiz', { set: $('#quiz-set').value, mode: $('#quiz-mode').value, dir: $('#quiz-dir').value });
+  }
+  ['set', 'mode', 'dir'].forEach((k) => $('#quiz-' + k).addEventListener('change', () => { syncQuizControls(); quizIntro(); }));
 
   function quizIntro() {
     quiz = null;
+    syncQuizControls();
+    const all = allPool().length;
     const n = pool().length;
-    area.innerHTML = n
-      ? `<div class="empty"><h3>Готов?</h3><p>В словаре ${n} ${plural(n, ['слово', 'слова', 'слов'])} для этого языка. Выбери режим и начни раунд.</p></div>`
-      : `<div class="empty"><h3>Для квиза нужны слова</h3><p>Открой статью и нажми на несколько слов: они сразу появятся здесь.</p></div>`;
+    if (!all) {
+      area.innerHTML = `<div class="empty"><h3>Для квиза нужны слова</h3><p>Открой статью и нажми на несколько слов: они сразу появятся здесь.</p></div>`;
+    } else if (!n) {
+      area.innerHTML = `<div class="empty"><h3>Нет слов на проверку</h3><p>Открой «Словарь» и нажми «На проверку» у слов, которые хочешь выучить. Или выбери «Все слова».</p><p style="margin-top:14px"><button class="ghost" id="go-words">Открыть словарь</button></p></div>`;
+    } else {
+      area.innerHTML = `<div class="empty"><h3>Готов?</h3><p>${$('#quiz-set').value === 'check' ? 'На проверку отмечено' : 'В словаре'} ${n} ${plural(n, ['слово', 'слова', 'слов'])}. Выбери режим и начни раунд.</p></div>`;
+    }
   }
 
   $('#quiz-start').addEventListener('click', startQuiz);
@@ -867,7 +924,7 @@
     const mode = $('#quiz-mode').value;
     const dir = $('#quiz-dir').value;
     if (!p.length) return quizIntro();
-    if (mode === 'choice' && p.length < 2) {
+    if (mode === 'choice' && allPool().length < 2) {
       area.innerHTML = '<div class="empty"><h3>Нужно хотя бы два слова</h3><p>Для выбора ответа должно быть из чего выбирать. Добавь ещё слов или переключись на карточки.</p></div>';
       return;
     }
@@ -876,8 +933,9 @@
       .sort((a, b) => a.s - b.s)
       .slice(0, 10)
       .map((x) => x.w);
-    quiz = { mode, dir, queue, i: 0, score: 0, revealed: false, answered: false, options: [] };
+    quiz = { mode, dir: mode === 'write' ? 'rev' : dir, queue, i: 0, score: 0, revealed: false, answered: false, options: [], hint: 0, typed: '' };
     renderQuiz();
+    focusAnswer();
   }
 
   const front = (w) => (quiz.dir === 'fwd' ? w.text : w.tr);
@@ -891,6 +949,28 @@
     }
     const w = quiz.queue[quiz.i];
     const progress = `<div class="q-bar"><span style="width:${(quiz.i / quiz.queue.length) * 100}%"></span></div><div class="q-count">${quiz.i + 1} из ${quiz.queue.length}</div>`;
+
+    if (quiz.mode === 'write') {
+      const masked = w.context ? blankOut(w.context, w.text) : '';
+      const hintLine = quiz.hint === 0 || quiz.answered ? ''
+        : `<div class="hint-line">${quiz.hint >= 1 ? `Начинается на <b>${esc(w.text[0])}</b>, букв: ${w.text.length}` : ''}${quiz.hint >= 2 && masked ? `<br>${masked}` : ''}</div>`;
+      let verdict = '';
+      if (quiz.answered) {
+        verdict = quiz.result === 'right' ? `<div class="q-verdict right">${ICON_CHECK} Верно: <b>${esc(w.text)}</b>${sayBtn(w.text)}</div>`
+          : quiz.result === 'close' ? `<div class="q-verdict right">${ICON_CHECK} Почти, правильно пишется <b>${esc(w.text)}</b>${sayBtn(w.text)}</div>`
+          : `<div class="q-verdict wrong">Правильно: <b>${esc(w.text)}</b>${sayBtn(w.text)}</div>`;
+      }
+      area.innerHTML = progress + `
+        <div class="q-card q-write"><div>${esc(w.tr)}</div>${hintLine}${quiz.answered && w.context ? `<div class="ctx">${esc(w.context)}</div>` : ''}</div>
+        <form class="q-form" id="q-form" autocomplete="off">
+          <input id="q-input" type="text" placeholder="Напиши по-английски" aria-label="Ответ по-английски" autocapitalize="off" autocorrect="off" spellcheck="false" value="${esc(quiz.typed)}" ${quiz.answered ? `readonly class="${quiz.result === 'wrong' ? 'wrong' : 'right'}"` : ''}>
+          <button type="submit">${quiz.answered ? 'Дальше' : 'Проверить'}</button>
+        </form>
+        ${verdict}
+        ${quiz.answered ? '' : `<div class="q-sub">${quiz.hint < (w.context ? 2 : 1) ? '<button class="link" id="q-hint">Подсказка</button>' : ''}<button class="link" id="q-skip">Не знаю</button></div>`}
+        <div class="q-keys">Enter — проверить и дальше</div>`;
+      return;
+    }
 
     if (quiz.mode === 'cards') {
       area.innerHTML = progress + `
@@ -916,6 +996,50 @@
       <div class="q-keys">Клавиши 1–4 выбирают ответ, пробел ведёт дальше</div>`;
   }
 
+  // the sentence with the word itself replaced by blanks
+  function blankOut(ctx, word) {
+    const re = new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'ig');
+    return esc(ctx).replace(re, (m) => '<b>' + m[0] + '_'.repeat(Math.max(2, m.length - 1)) + '</b>');
+  }
+
+  const normAns = (s) => s.toLowerCase().replace(/[’`]/g, "'").replace(/\s+/g, ' ').trim();
+  function editDistance(a, b) {
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1); // swapped letters
+    }
+    return d[a.length][b.length];
+  }
+
+  function checkWritten(skip) {
+    const w = quiz.queue[quiz.i];
+    const input = $('#q-input');
+    quiz.typed = skip ? '' : (input ? input.value : '');
+    const a = normAns(quiz.typed), t = normAns(w.text);
+    if (!skip && !a) return;
+    quiz.result = a === t ? 'right' : !skip && t.length >= 5 && editDistance(a, t) === 1 ? 'close' : 'wrong';
+    quiz.answered = true;
+    grade(w, quiz.result !== 'wrong');
+    renderQuiz();
+    if (quiz.result === 'wrong') say(w.text, area.querySelector('.q-verdict .say'));
+    const btn = area.querySelector('#q-form button');
+    if (btn) btn.focus();
+  }
+
+  function focusAnswer() {
+    const i = $('#q-input');
+    if (i && !i.readOnly) i.focus();
+  }
+
+  area.addEventListener('submit', (e) => {
+    if (e.target.id !== 'q-form' || !quiz) return;
+    e.preventDefault();
+    if (quiz.answered) { nextQuestion(); focusAnswer(); } else checkWritten(false);
+  });
+  area.addEventListener('input', (e) => { if (e.target.id === 'q-input' && quiz) quiz.typed = e.target.value; });
+
   function grade(w, ok) {
     w[ok ? 'right' : 'wrong']++;
     if (ok) quiz.score++;
@@ -927,14 +1051,24 @@
     quiz.revealed = false;
     quiz.answered = false;
     quiz.options = [];
+    quiz.hint = 0;
+    quiz.typed = '';
+    quiz.result = '';
     renderQuiz();
   }
 
   area.addEventListener('click', (e) => {
+    if (e.target.closest('#go-words')) return showView('words');
     if (!quiz) return;
     if (e.target.closest('#again')) return startQuiz();
     const w = quiz.queue[quiz.i];
     if (!w) return;
+
+    if (quiz.mode === 'write') {
+      if (e.target.closest('#q-hint')) { quiz.typed = ($('#q-input') || {}).value || ''; quiz.hint++; renderQuiz(); focusAnswer(); }
+      else if (e.target.closest('#q-skip')) checkWritten(true);
+      return;
+    }
 
     if (quiz.mode === 'cards') {
       const k = e.target.closest('[data-k]');
@@ -958,7 +1092,7 @@
   });
 
   document.addEventListener('keydown', (e) => {
-    if (!quiz || !$('#view-quiz').classList.contains('active')) return;
+    if (!quiz || quiz.mode === 'write' || !$('#view-quiz').classList.contains('active')) return;
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
     const w = quiz.queue[quiz.i];
     if (!w) return;

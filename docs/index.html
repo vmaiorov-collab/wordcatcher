@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400..700&family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,400..600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
   <header class="top" id="top">
@@ -97,6 +97,14 @@
           <button id="clear" class="ghost danger">Очистить</button>
         </div>
       </div>
+      <div id="words-filter" class="words-filter hidden">
+        <div class="seg" role="group" aria-label="Какие слова показать">
+          <button data-f="all" class="on">Все <span id="f-all"></span></button>
+          <button data-f="check">На проверку <span id="f-check"></span></button>
+        </div>
+        <button id="mark-all" class="link">Отметить все показанные</button>
+        <button id="unmark-all" class="link">Снять отметки</button>
+      </div>
       <ul id="word-list" class="word-list"></ul>
       <div id="empty-words" class="empty hidden">
         <h3>Здесь пока пусто</h3>
@@ -109,16 +117,21 @@
       <div class="page-head">
         <div>
           <h2>Квиз</h2>
-          <p class="page-sub">Раунд из десяти слов. Те, в которых ты чаще ошибаешься, попадаются чаще.</p>
+          <p class="page-sub">Раунд из десяти слов. Те, в которых ты чаще ошибаешься, попадаются чаще. Слова для проверки отмечаются в «Словаре».</p>
         </div>
         <div class="bar-actions">
+          <select id="quiz-set" class="pick" aria-label="Какие слова">
+            <option value="check">На проверку</option>
+            <option value="all">Все слова</option>
+          </select>
           <select id="quiz-mode" class="pick" aria-label="Режим">
+            <option value="write">Написать по-английски</option>
             <option value="cards">Карточки</option>
             <option value="choice">Выбор ответа</option>
           </select>
           <select id="quiz-dir" class="pick" aria-label="Направление">
-            <option value="fwd">Английский, затем перевод</option>
-            <option value="rev">Перевод, затем английский</option>
+            <option value="rev">Рус → англ</option>
+            <option value="fwd">Англ → рус</option>
           </select>
           <button id="quiz-start">Начать раунд</button>
         </div>
@@ -149,6 +162,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@mozilla/readability@0.5.0/Readability.js"></script>
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>
