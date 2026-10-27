@@ -468,6 +468,30 @@
     return { tr: t, alts: [], by: 'google' };
   }
 
+  // The browser's own on-device translator (Translator API): Apple's engine in Safari where it is
+  // supported, Google's in Chrome. Nothing goes over the network, so a content blocker can't stop it.
+  const deviceTranslators = new Map();
+  async function deviceTranslate(text, to) {
+    const T = self.Translator;
+    if (!T || typeof T.create !== 'function') throw new Error('no translator api');
+    let p = deviceTranslators.get(to);
+    if (!p) {
+      const opts = { sourceLanguage: 'en', targetLanguage: to };
+      p = (async () => {
+        if (typeof T.availability === 'function' && (await T.availability(opts)) === 'unavailable') throw new Error('unavailable');
+        return T.create(opts);
+      })();
+      deviceTranslators.set(to, p);
+      p.catch(() => deviceTranslators.delete(to)); // e.g. the language pack needs a click to download
+    }
+    const tr = await p;
+    let t = String((await tr.translate(text)) || '').trim();
+    if (!hasLetters(t) || t.toLowerCase() === text.toLowerCase()) throw new Error('empty');
+    if (text === text.toLowerCase() && !/\s/.test(text)) t = t.toLowerCase();
+    return { tr: t, alts: [], by: 'device' };
+  }
+  const isGood = (by) => by === 'google' || by === 'device';
+
   // Last resort: a translation memory built from other people's texts. For single words its top
   // answer is often junk (a Wikipedia title such as "Дафф, Хилари" for "devoted", a fragment such
   // as "в столбик, стопкой" for "stacked"), so the candidates are scored instead of trusting it.
@@ -514,15 +538,15 @@
       if (!s.ok) throw new Error(s.data.error || 'Ошибка перевода');
       res = { tr: s.data.translation, alts: s.data.alts || [], by: s.data.by || 'google' };
     } else {
-      const tries = [googleTranslate, googleTranslate2];
+      const tries = [googleTranslate, deviceTranslate, googleTranslate2];
       if (!googleOnly) tries.push(myMemoryTranslate);
       for (const fn of tries) {
         try { res = await fn(text, to); break; } catch { /* try the next service */ }
       }
       if (!res) throw new Error('Не удалось получить перевод. Проверь интернет и нажми «Повторить».');
     }
-    if (googleOnly && res.by !== 'google') throw new Error('no google');
-    if (res.by === 'google') trCache.set(key, res); // a backup answer is retried next time
+    if (googleOnly && !isGood(res.by)) throw new Error('no good translator');
+    if (isGood(res.by)) trCache.set(key, res); // a backup answer is retried next time
     return res;
   }
 
@@ -591,10 +615,10 @@
       current.status = 'ok';
       renderPopup();
       if (existing.v !== 3) {
-        // saved from the backup service: fix it now if Google answers
+        // saved from the backup service: fix it now if a good translator answers
         try {
-          const res = await translate(text, lang, true);
-          Object.assign(existing, { tr: res.tr, alts: res.alts, by: 'google', v: 3 });
+          const res = await fixWord(existing);
+          if (!res) return;
           saveWords();
           renderMargin();
           if (token !== popupToken) return;
@@ -648,7 +672,7 @@
     if (words.some((w) => w.key === c.key && w.lang === lang)) return;
     words.unshift({
       id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-      key: c.key, text: c.text, tr: c.tr, alts: c.alts || [], by: c.by || '', v: c.by === 'google' ? 3 : 2, context: c.context || '', lang, src: currentSrc,
+      key: c.key, text: c.text, tr: c.tr, alts: c.alts || [], by: c.by || '', v: isGood(c.by) ? 3 : 2, mm: c.by === 'mymemory' ? 2 : 0, context: c.context || '', lang, src: currentSrc,
       added: Date.now(), right: 0, wrong: 0,
     });
     saveWords();
@@ -864,18 +888,27 @@
   // Words not translated by Google (saved by earlier versions, or by the backup service while
   // Google was unreachable) can hold junk such as "дафф, хилари": translate them again with
   // Google only. If Google is still unreachable they stay as they are and are retried next visit.
+  // A saved word that did not come from a good translator: try Google or the on-device one; if
+  // neither answers, at least re-pick it once with the junk filter (mm: 2), so "дафф, хилари"
+  // does not survive. Returns the new translation or null when nothing changed.
+  async function fixWord(w) {
+    let res = null;
+    try {
+      res = await translate(w.text, w.lang, true);
+    } catch {
+      if (w.mm === 2) return null;
+      try { res = await myMemoryTranslate(w.text, w.lang); } catch { return null; }
+    }
+    Object.assign(w, { tr: res.tr, alts: res.alts || [], by: res.by, v: isGood(res.by) ? 3 : 2, mm: isGood(res.by) ? 0 : 2 });
+    saveWords();
+    renderMargin();
+    return res;
+  }
+
   async function upgradeWords() {
     const todo = words.filter((w) => w.v !== 3).slice(0, 40);
     for (const w of todo) {
-      try {
-        const res = await translate(w.text, w.lang, true);
-        w.tr = res.tr;
-        w.alts = res.alts;
-        w.by = 'google';
-        w.v = 3;
-      } catch {
-        break; // no network or the service is down: try again on the next visit
-      }
+      if (!(await fixWord(w)) && w.mm !== 2) break; // no network: try again on the next visit
       saveWords();
       renderMargin();
       if ($('#view-words').classList.contains('active')) renderWords();
