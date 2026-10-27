@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400..700&family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,400..600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
   <header class="top" id="top">
@@ -130,16 +130,18 @@
   <div id="popup" class="popup hidden" role="dialog" aria-label="Перевод">
     <div class="pop-head">
       <span id="pop-word" class="pop-word"></span>
-      <button id="pop-speak" class="icon" title="Произнести" aria-label="Произнести">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
-      </button>
       <button id="pop-close" class="icon" title="Закрыть" aria-label="Закрыть">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
       </button>
     </div>
+    <button id="pop-say" class="pop-say" title="Послушать произношение">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>
+      <span id="pop-ipa">Как читается</span>
+    </button>
     <div id="pop-tr" class="pop-tr"></div>
     <div id="pop-alt" class="pop-alt hidden"></div>
     <div id="pop-ctx" class="pop-ctx"></div>
+    <button id="pop-say-ctx" class="link pop-say-ctx hidden">Послушать предложение</button>
     <div class="pop-foot">
       <span id="pop-state" class="pop-state"></span>
       <button id="pop-toggle" class="link"></button>
@@ -147,6 +149,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@mozilla/readability@0.5.0/Readability.js"></script>
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>

@@ -552,6 +552,7 @@
 
   function closePopup() {
     popupToken++;
+    stopSpeech();
     popup.classList.add('hidden');
     clearActive();
   }
@@ -573,6 +574,7 @@
     $('#pop-word').textContent = c.text;
     $('#pop-ctx').textContent = c.context || '';
     $('#pop-ctx').classList.toggle('hidden', !c.context);
+    $('#pop-say-ctx').classList.toggle('hidden', !c.context || c.context.trim().toLowerCase() === c.key);
     const tr = $('#pop-tr');
     tr.className = 'pop-tr';
     if (c.status === 'loading') { tr.textContent = 'Перевожу…'; tr.classList.add('loading'); }
@@ -600,7 +602,11 @@
     };
     const key = text.toLowerCase();
     current = { text, key, context, tr: '', alts: [], status: 'loading', error: '' };
+    stopSpeech();
     popup.classList.remove('hidden');
+    const known = words.find((w) => w.key === key && w.ipa);
+    current.ipa = known ? known.ipa : '';
+    showPron(current, token);
 
     let existing = words.find((w) => w.key === key && w.lang === lang);
     if (existing && !hasLetters(existing.tr)) {
@@ -660,19 +666,106 @@
     renderPopup();
   });
 
-  $('#pop-speak').addEventListener('click', () => {
-    if (!current || !('speechSynthesis' in window)) return;
-    const u = new SpeechSynthesisUtterance(current.text);
+  // ---------- pronunciation ----------
+  // A real recording and transcription from the free Dictionary API (dictionaryapi.dev); when a
+  // word has no recording (or for a phrase or sentence) the browser's English voice reads it.
+  const ICON_PLAY = '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
+  const sayBtn = (text) => `<button class="say icon" data-say="${esc(text)}" title="Послушать" aria-label="Послушать">${ICON_PLAY}</button>`;
+  const pronCache = new Map();
+
+  function lookupPron(word) {
+    const key = word.toLowerCase();
+    if (!/^\p{L}+(?:['’-]\p{L}+)*$/u.test(key)) return Promise.resolve(null);
+    if (!pronCache.has(key)) {
+      pronCache.set(key, (async () => {
+        const r = await fetch('https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(key), { signal: AbortSignal.timeout(8000) });
+        if (!r.ok) return null;
+        const d = await r.json();
+        const ph = (Array.isArray(d) ? d : []).flatMap((e) => [{ text: e.phonetic }, ...(e.phonetics || [])]);
+        const withAudio = ph.filter((p) => p.audio);
+        const audio = (withAudio.find((p) => /-us\.mp3$/.test(p.audio)) || withAudio.find((p) => /-uk\.mp3$/.test(p.audio)) || withAudio[0] || {}).audio || '';
+        const ipa = (ph.find((p) => p.text && p.audio === audio) || ph.find((p) => p.text) || {}).text || '';
+        return ipa || audio ? { ipa, audio: audio.replace(/^\/\//, 'https://') } : null;
+      })().catch(() => { pronCache.delete(key); return null; }));
+    }
+    return pronCache.get(key);
+  }
+
+  let player = null;
+  let playingBtn = null;
+  function stopSpeech() {
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    if (player) { player.onended = player.onerror = null; player.pause(); player = null; }
+    if (playingBtn) playingBtn.classList.remove('playing');
+    playingBtn = null;
+  }
+
+  function englishVoice() {
+    const vs = speechSynthesis.getVoices();
+    const en = vs.filter((v) => /^en[-_]/i.test(v.lang));
+    return en.find((v) => /^en[-_]US/i.test(v.lang) && /samantha|ava|allison|natural|premium|enhanced|google/i.test(v.name))
+      || en.find((v) => /^en[-_]US/i.test(v.lang)) || en.find((v) => /^en[-_]GB/i.test(v.lang)) || en[0] || null;
+  }
+  if ('speechSynthesis' in window) speechSynthesis.getVoices(); // Safari loads voices lazily
+
+  function ttsSay(text, rate, done) {
+    if (!('speechSynthesis' in window)) return done();
+    const u = new SpeechSynthesisUtterance(text);
     u.lang = 'en-US';
-    speechSynthesis.cancel();
+    const v = englishVoice();
+    if (v) u.voice = v;
+    u.rate = rate;
+    u.onend = u.onerror = done;
     speechSynthesis.speak(u);
-  });
+  }
+
+  async function say(text, btn, rate = 0.95) {
+    const again = btn && btn === playingBtn;
+    stopSpeech();
+    if (again) return; // a second press stops it
+    playingBtn = btn || null;
+    if (btn) btn.classList.add('playing');
+    const done = () => { if (playingBtn === btn) stopSpeech(); };
+    const p = /\s/.test(text.trim()) ? null : await lookupPron(text.trim());
+    if (playingBtn !== (btn || null)) return; // another button was pressed meanwhile
+    if (p && p.audio) {
+      player = new Audio(p.audio);
+      player.onended = done;
+      player.onerror = () => { player = null; ttsSay(text, rate, done); };
+      player.play().catch(() => { player = null; ttsSay(text, rate, done); });
+    } else {
+      ttsSay(text, rate, done);
+    }
+  }
+
+  // speaker buttons in the word list and the quiz
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('.say[data-say]');
+    if (!b) return;
+    e.stopPropagation();
+    say(b.dataset.say, b);
+  }, true);
+
+  $('#pop-say').addEventListener('click', () => current && say(current.text, $('#pop-say')));
+  $('#pop-say-ctx').addEventListener('click', (e) => current && current.context && say(current.context, e.currentTarget, 0.9));
+
+  async function showPron(c, token) {
+    $('#pop-ipa').textContent = c.ipa || 'Как читается';
+    if (c.ipa) return;
+    const p = await lookupPron(c.text);
+    if (token !== popupToken || !p || !p.ipa) return;
+    c.ipa = p.ipa;
+    $('#pop-ipa').textContent = p.ipa;
+    const w = words.find((x) => x.key === c.key && x.lang === lang);
+    if (w && !w.ipa) { w.ipa = p.ipa; saveWords(); }
+    positionPopup();
+  }
 
   function addWord(c) {
     if (words.some((w) => w.key === c.key && w.lang === lang)) return;
     words.unshift({
       id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-      key: c.key, text: c.text, tr: c.tr, alts: c.alts || [], by: c.by || '', v: isGood(c.by) ? 3 : 2, mm: c.by === 'mymemory' ? 2 : 0, context: c.context || '', lang, src: currentSrc,
+      key: c.key, text: c.text, ipa: c.ipa || '', tr: c.tr, alts: c.alts || [], by: c.by || '', v: isGood(c.by) ? 3 : 2, mm: c.by === 'mymemory' ? 2 : 0, context: c.context || '', lang, src: currentSrc,
       added: Date.now(), right: 0, wrong: 0,
     });
     saveWords();
@@ -707,7 +800,7 @@
       const meta = [where(w.src), when(w.added)].filter(Boolean).join(', ');
       return `
       <li>
-        <div class="wl-word">${esc(w.text)}</div>
+        <div class="wl-word">${esc(w.text)}${sayBtn(w.text)}${w.ipa ? `<span class="wl-ipa">${esc(w.ipa)}</span>` : ''}</div>
         <div class="wl-tr">${esc(w.tr)}</div>
         ${w.alts && w.alts.length ? `<div class="wl-alt">Ещё: ${esc(w.alts.join(', '))}</div>` : ''}
         ${w.context ? `<div class="wl-ctx">${esc(w.context)}</div>` : ''}
@@ -801,9 +894,9 @@
 
     if (quiz.mode === 'cards') {
       area.innerHTML = progress + `
-        <div class="q-card" id="qc"><div>${esc(front(w))}</div>
+        <div class="q-card" id="qc"><div>${esc(front(w))}</div>${quiz.dir === 'fwd' ? sayBtn(w.text) : ''}
         ${quiz.revealed
-          ? `<div class="ans">${esc(back(w))}</div>${w.context ? `<div class="ctx">${esc(w.context)}</div>` : ''}`
+          ? `<div class="ans">${esc(back(w))}</div>${quiz.dir === 'fwd' ? '' : sayBtn(w.text)}${w.context ? `<div class="ctx">${esc(w.context)}</div>` : ''}`
           : '<small>Нажми на карточку, чтобы увидеть ответ</small>'}
         </div>
         ${quiz.revealed
@@ -817,7 +910,7 @@
       quiz.options = shuffle([w, ...others]);
     }
     area.innerHTML = progress + `
-      <div class="q-card" style="cursor:default"><div>${esc(front(w))}</div></div>
+      <div class="q-card" style="cursor:default"><div>${esc(front(w))}</div>${quiz.dir === 'fwd' ? sayBtn(w.text) : ''}</div>
       <div class="opts">${quiz.options.map((o, i) => `<button class="opt" data-id="${esc(o.id)}"><b>${i + 1}</b><span>${esc(back(o))}</span></button>`).join('')}</div>
       <div class="q-next hidden" id="next-row"><button id="next">Дальше</button></div>
       <div class="q-keys">Клавиши 1–4 выбирают ответ, пробел ведёт дальше</div>`;
