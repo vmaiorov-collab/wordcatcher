@@ -451,7 +451,7 @@
         if (a.toLowerCase() !== main.toLowerCase() && !alts.includes(a)) alts.push(a);
       }));
     }
-    return { tr: main, alts: alts.slice(0, 3), by: 'google' };
+    return { tr: main, alts: alts.slice(0, 3), dict: alts.slice(0, 24), by: 'google' };
   }
 
   // Same Google engine on another host (the one the Chrome dictionary uses): it still works when
@@ -550,6 +550,105 @@
     return res;
   }
 
+  // ---------- translation in context ----------
+  // A word alone is ambiguous ("moggy", "soliciting", "the deck is stacked"), so the whole sentence
+  // is translated too: once plain, and with the word wrapped in markers (<b>…</b>, […], "…") that
+  // Google keeps around the matching Russian words. The marked candidates vote: points for
+  // appearing in the plain sentence translation, for matching a dictionary meaning of the word and
+  // for agreeing with each other; a transliteration ("Могги" for "moggy") loses points.
+  const ctxCache = new Map();
+  const TRANSLIT = { a: 'а', b: 'б', c: 'к', d: 'д', e: 'е', f: 'ф', g: 'г', h: 'х', i: 'и', j: 'дж', k: 'к', l: 'л', m: 'м', n: 'н', o: 'о', p: 'п', q: 'к', r: 'р', s: 'с', t: 'т', u: 'у', v: 'в', w: 'в', x: 'кс', y: 'и', z: 'з' };
+  const normT = (x) => String(x || '').toLowerCase().replace(/ё/g, 'е').trim();
+  const tokens = (x) => normT(x).match(/[\p{L}]+(?:-[\p{L}]+)*/gu) || [];
+  // a rough Russian stem: drop the ending (вену/вена → вен, гортани/гортань → горта)
+  const stemOf = (t) => t.slice(0, Math.max(3, t.length <= 5 ? t.length - 1 : t.length <= 7 ? t.length - 2 : t.length - 3));
+
+  // does any 4+ letter word of the candidate occur (by its stem) in the text?
+  function sharesStem(cand, text) {
+    const tt = tokens(text).filter((t) => t.length >= 4); // "к", "на" must not match everything
+    return tokens(cand).some((c) => c.length >= 4 && tt.some((t) => t.startsWith(stemOf(c)) || c.startsWith(stemOf(t))));
+  }
+
+  function looksCopied(word, cand) {
+    const c = normT(cand).replace(/[^\p{L}]/gu, '');
+    const w = normT(word).replace(/[^\p{L}]/gu, '');
+    if (!c) return true;
+    const tr = w.replace(/[a-z]/g, (ch) => TRANSLIT[ch] || ch).replace(/(.)\1+/g, '$1');
+    const cc = c.replace(/(.)\1+/g, '$1');
+    const near = (a, b) => editDistance(a, b) <= Math.max(1, Math.round(b.length * 0.34));
+    return near(cc, w.replace(/(.)\1+/g, '$1')) || near(cc, tr);
+  }
+
+  function markIn(sentence, word, open, close) {
+    const re = new RegExp('(^|[^\\p{L}])(' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')(?![\\p{L}])', 'iu');
+    if (!re.test(sentence)) return null;
+    return sentence.replace(re, (m, pre, w) => pre + open + w + close);
+  }
+
+  const MARKERS = [
+    { open: '<b>', close: '</b>', find: /<b>\s*([^<]+?)\s*<\/b>/i },
+    { open: '[', close: ']', find: /\[\s*([^\]]+?)\s*\]/ },
+    { open: '"', close: '"', find: /[«"“„]\s*([^»"”“]+?)\s*[»"”]/, skip: /["“”«»‘’]/ },
+  ];
+
+  async function translateInContext(text, sentence, to = lang) {
+    const base = await translate(text, to);
+    const plainSentence = sentence && sentence.replace(/\s+/g, ' ').trim();
+    if (!plainSentence || normT(plainSentence) === normT(text) || !/\s/.test(plainSentence)) return base;
+    const key = to + '|' + text.toLowerCase() + '|' + plainSentence;
+    if (ctxCache.has(key)) return ctxCache.get(key);
+
+    const good = (r) => (r && isGood(r.by) ? r : null);
+    const marked = MARKERS.map((m) => (m.skip && m.skip.test(plainSentence) ? null : markIn(plainSentence, text, m.open, m.close)));
+    const [plain, ...variants] = await Promise.all([plainSentence, ...marked].map((q) => (q ? translate(q, to).then(good, () => null) : null)));
+    if (!plain) return base; // only the backup service answered: it cannot do this
+
+    const cands = [];
+    variants.forEach((v, i) => {
+      const m = v && v.tr.match(MARKERS[i].find);
+      const c = m && (m[1] || m[2] || '').replace(/^[\s,.;:!?—–-]+|[\s,.;:!?—–-]+$/g, '');
+      if (!c || !hasLetters(c) || tokens(c).length > 4) return;
+      const same = cands.find((x) => normT(x.t) === normT(c));
+      if (same) same.s += 1; // another marker found the same words
+      else cands.push({ t: c, s: 1 }); // found by a marker: it sits where the word is
+    });
+    const meanings = [base.tr, ...(base.dict || base.alts || [])];
+    // words of the plain sentence translation that are forms of a dictionary meaning
+    tokens(plain.tr).forEach((t) => {
+      if (t.length >= 4 && meanings.some((m) => sharesStem(t, m)) && !cands.some((x) => sharesStem(x.t, t))) cands.push({ t, s: 0 });
+    });
+    cands.forEach((c) => {
+      if (looksCopied(text, c.t)) { c.s = -100; return; } // "могги" for "moggy" is not a translation
+      if (sharesStem(c.t, plain.tr)) c.s += 2;
+      if (meanings.some((m) => sharesStem(c.t, m))) c.s += 2;
+      c.s += cands.filter((o) => o !== c && o.s > 0 && sharesStem(c.t, o.t)).length;
+    });
+    cands.sort((a, b) => b.s - a.s);
+    const baseCopied = looksCopied(text, base.tr);
+    let tr = base.tr;
+    // the machine translation of the lone word is not one of its dictionary meanings and is not
+    // used in the sentence either ("moggy" → "туманный", dictionary: "киска"): trust the dictionary
+    const dict = base.dict || [];
+    if (dict.length && !dict.some((m) => normT(m) === normT(base.tr)) && !sharesStem(base.tr, plain.tr)) tr = dict[0];
+    if (cands[0] && cands[0].s > -100 && (cands[0].s > 1 || (cands[0].s > 0 && !sharesStem(tr, plain.tr)) || baseCopied)) tr = cands[0].t;
+    // a single word in the sentence's case ("гортани") → its dictionary form ("гортань")
+    if (tokens(tr).length === 1) {
+      const lemma = meanings.filter((m) => m && tokens(m).length <= 2 && sharesStem(tr, m) && tokens(m).some((t) => stemOf(t) === stemOf(tokens(tr)[0]) || tokens(tr)[0].startsWith(stemOf(t))))
+        .sort((a, b) => a.length - b.length)[0];
+      if (lemma) tr = lemma;
+    }
+    if (text === text.toLowerCase() && !/^\p{Lu}{2,}/u.test(tr)) tr = tr.charAt(0).toLowerCase() + tr.slice(1);
+
+    const alts = [];
+    const baseInDict = !dict.length || dict.some((m) => normT(m) === normT(base.tr));
+    [...(baseInDict ? [base.tr] : []), ...(base.alts || [])].forEach((a) => {
+      if (a && !sharesStem(a, tr) && normT(a) !== normT(tr) && !looksCopied(text, a) && !alts.some((x) => normT(x) === normT(a))) alts.push(a);
+    });
+    const res = { tr, alts: alts.slice(0, 3), sentenceTr: plain.tr, by: base.by, cx: 1 };
+    ctxCache.set(key, res);
+    return res;
+  }
+
   function closePopup() {
     popupToken++;
     stopSpeech();
@@ -580,6 +679,16 @@
     if (c.status === 'loading') { tr.textContent = 'Перевожу…'; tr.classList.add('loading'); }
     else if (c.status === 'error') { tr.textContent = c.error; tr.classList.add('err'); }
     else tr.textContent = c.tr;
+    const st = $('#pop-sent');
+    if (c.status === 'ok' && c.sentenceTr) {
+      const safe = esc(c.sentenceTr);
+      const hit = tokens(c.tr).filter((t) => t.length >= 3).map(stemOf);
+      // bold the words of the chosen meaning inside the sentence translation
+      st.innerHTML = '<span class="pop-sent-label">В предложении:</span> ' + (hit.length
+        ? safe.replace(/[\p{L}]+(?:-[\p{L}]+)*/gu, (wd) => (hit.some((h) => normT(wd).startsWith(h)) ? '<b>' + wd + '</b>' : wd))
+        : safe);
+    } else st.textContent = '';
+    st.classList.toggle('hidden', !st.textContent);
     const alt = $('#pop-alt');
     alt.textContent = c.status === 'ok' && c.alts && c.alts.length ? 'Ещё: ' + c.alts.join(', ') : '';
     alt.classList.toggle('hidden', !alt.textContent);
@@ -620,6 +729,23 @@
       current.alts = existing.alts || [];
       current.status = 'ok';
       renderPopup();
+      if (existing.v === 3 && context) {
+        // the meaning in this sentence, plus the sentence translation
+        try {
+          const res = await translateInContext(text, context);
+          if (token !== popupToken) return;
+          if (!existing.cx && (existing.context || '') === context) {
+            Object.assign(existing, { tr: res.tr, alts: res.alts, cx: res.cx || 0 });
+            saveWords();
+            renderMargin();
+          }
+          current.tr = res.tr;
+          current.alts = res.alts;
+          current.sentenceTr = res.sentenceTr || '';
+          renderPopup();
+        } catch { /* keep what is saved */ }
+        return;
+      }
       if (existing.v !== 3) {
         // saved from the backup service: fix it now if a good translator answers
         try {
@@ -637,11 +763,13 @@
     }
     renderPopup();
     try {
-      const res = await translate(text);
+      const res = await translateInContext(text, context);
       if (token !== popupToken) return;
       current.tr = res.tr;
       current.alts = res.alts;
       current.by = res.by;
+      current.cx = res.cx || 0;
+      current.sentenceTr = res.sentenceTr || '';
       current.status = 'ok';
       addWord(current);
       renderPopup();
@@ -765,7 +893,7 @@
     if (words.some((w) => w.key === c.key && w.lang === lang)) return;
     words.unshift({
       id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-      key: c.key, text: c.text, ipa: c.ipa || '', tr: c.tr, alts: c.alts || [], by: c.by || '', v: isGood(c.by) ? 3 : 2, mm: c.by === 'mymemory' ? 2 : 0, context: c.context || '', lang, src: currentSrc,
+      key: c.key, text: c.text, ipa: c.ipa || '', tr: c.tr, alts: c.alts || [], cx: c.cx || 0, by: c.by || '', v: isGood(c.by) ? 3 : 2, mm: c.by === 'mymemory' ? 2 : 0, context: c.context || '', lang, src: currentSrc,
       added: Date.now(), right: 0, wrong: 0,
     });
     saveWords();
@@ -1140,6 +1268,19 @@
       renderMargin();
       if ($('#view-words').classList.contains('active')) renderWords();
       await new Promise((r) => setTimeout(r, 150));
+    }
+    // words saved before translation in context: translate each once by its own sentence
+    const old = words.filter((w) => w.v === 3 && !w.cx && w.context && /\s/.test(w.context)).slice(0, 15);
+    for (const w of old) {
+      try {
+        const res = await translateInContext(w.text, w.context, w.lang);
+        if (!res.cx) break; // only the backup service answered: try again on the next visit
+        Object.assign(w, { tr: res.tr, alts: res.alts, cx: 1 });
+      } catch { break; }
+      saveWords();
+      renderMargin();
+      if ($('#view-words').classList.contains('active')) renderWords();
+      await new Promise((r) => setTimeout(r, 400));
     }
   }
 
