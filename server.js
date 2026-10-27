@@ -178,7 +178,48 @@ async function googleTranslate(q, from, to) {
       if (a.toLowerCase() !== translation.toLowerCase() && !alts.includes(a)) alts.push(a);
     }));
   }
-  return { translation, alts: alts.slice(0, 3) };
+  return { translation, alts: alts.slice(0, 3), by: 'google' };
+}
+
+// Same Google engine on another host: works when the first one is rate-limited.
+async function googleTranslate2(q, from, to) {
+  const p = new URLSearchParams({ client: 'dict-chrome-ex', sl: from, tl: to, q });
+  const r = await fetch(`https://clients5.google.com/translate_a/t?${p}`, { signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error(`google2 ${r.status}`);
+  const d = await r.json();
+  let t = Array.isArray(d) ? d[0] : '';
+  if (Array.isArray(t)) t = t[0];
+  t = String(t || '').trim();
+  if (!hasLetters(t) || t.toLowerCase() === q.toLowerCase()) throw new Error('empty');
+  return { translation: t, alts: [], by: 'google' };
+}
+
+// MyMemory's top answer for a single word is often junk ("Дафф, Хилари" for "devoted",
+// a Wikipedia title), so its candidates are scored instead of trusting the first one.
+function pickMyMemory(text, d) {
+  const q = text.trim().toLowerCase();
+  const lower = text === text.toLowerCase();
+  const cands = [{ segment: text, translation: d.responseData && d.responseData.translatedText, 'created-by': '', match: d.responseData && d.responseData.match }]
+    .concat(d.matches || []);
+  let best = null;
+  let bestScore = -Infinity;
+  cands.forEach((m) => {
+    const t = String(m.translation || '').trim();
+    if (!hasLetters(t) || t.toLowerCase() === q) return;
+    if (String(m.segment || '').trim().toLowerCase() !== q && Number(m.match) < 0.9) return;
+    const by = String(m['created-by'] || '');
+    if (/wikipedia/i.test(by)) return;
+    let s = Number(m.match) || 0;
+    if (by === 'MT!') s += 1;
+    s += (Number(m.quality) || 0) / 100;
+    if (lower && /(^|[\s,])\p{Lu}\p{Ll}/u.test(t) && !/^\p{Lu}[^,]*$/u.test(t)) s -= 2;
+    if (/,/.test(t) && !/\s/.test(q)) s -= 0.5;
+    if (s > bestScore) {
+      best = t;
+      bestScore = s;
+    }
+  });
+  return best;
 }
 
 // Backup. It is a translation memory, so it can answer with stray punctuation: skip such answers.
@@ -191,10 +232,10 @@ async function myMemoryTranslate(q, from, to) {
   if (Number(data && data.responseStatus) !== 200 || /MYMEMORY WARNING/i.test(t || '')) {
     throw new Error('Translation service is unavailable or the daily limit is reached.');
   }
-  if (!hasLetters(t)) t = ((data.matches || []).find((m) => hasLetters(m.translation)) || {}).translation;
-  if (!hasLetters(t)) throw new Error('No usable translation came back. Try again.');
+  t = pickMyMemory(q, data);
+  if (!t) throw new Error('No usable translation came back. Try again.');
   if (q === q.toLowerCase()) t = t.toLowerCase();
-  return { translation: t, alts: [] };
+  return { translation: t, alts: [], by: 'mymemory' };
 }
 
 const cache = new Map();
@@ -211,8 +252,11 @@ app.get('/api/translate', async (req, res) => {
     const key = `${from}|${to}|${q.toLowerCase()}`;
     if (cache.has(key)) return res.json(cache.get(key));
 
-    const out = (await googleTranslate(q, from, to).catch(() => null)) || (await myMemoryTranslate(q, from, to));
-    cache.set(key, out);
+    const out =
+      (await googleTranslate(q, from, to).catch(() => null)) ||
+      (await googleTranslate2(q, from, to).catch(() => null)) ||
+      (await myMemoryTranslate(q, from, to));
+    if (out.by === 'google') cache.set(key, out); // a backup answer is retried next time
     res.json(out);
   } catch (e) {
     res.status(502).json({ error: e.message || 'Translation failed.' });
@@ -225,4 +269,4 @@ if (require.main === module) {
   app.listen(PORT, () => console.log(`Wordcatcher is running: http://localhost:${PORT}`));
 }
 
-module.exports = { extractArticle, isPrivateIp, googleTranslate, myMemoryTranslate };
+module.exports = { extractArticle, isPrivateIp, googleTranslate, googleTranslate2, myMemoryTranslate, pickMyMemory };

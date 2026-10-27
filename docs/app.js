@@ -451,41 +451,78 @@
         if (a.toLowerCase() !== main.toLowerCase() && !alts.includes(a)) alts.push(a);
       }));
     }
-    return { tr: main, alts: alts.slice(0, 3) };
+    return { tr: main, alts: alts.slice(0, 3), by: 'google' };
   }
 
-  // Backup: a translation memory built from other people's texts, so single words can come back odd.
+  // Same Google engine on another host (the one the Chrome dictionary uses): it still works when
+  // the first host is rate-limited or blocked by a content blocker. No other meanings here.
+  async function googleTranslate2(text, to) {
+    const p = new URLSearchParams({ client: 'dict-chrome-ex', sl: 'en', tl: to, q: text });
+    const r = await fetch('https://clients5.google.com/translate_a/t?' + p, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error('google2 ' + r.status);
+    const d = await r.json();
+    let t = Array.isArray(d) ? d[0] : '';
+    if (Array.isArray(t)) t = t[0];
+    t = String(t || '').trim();
+    if (!hasLetters(t) || t.toLowerCase() === text.toLowerCase()) throw new Error('empty');
+    return { tr: t, alts: [], by: 'google' };
+  }
+
+  // Last resort: a translation memory built from other people's texts. For single words its top
+  // answer is often junk (a Wikipedia title such as "Дафф, Хилари" for "devoted", a fragment such
+  // as "в столбик, стопкой" for "stacked"), so the candidates are scored instead of trusting it.
+  function pickMyMemory(text, d) {
+    const q = text.trim().toLowerCase();
+    const lower = text === text.toLowerCase();
+    const cands = [{ segment: text, translation: d.responseData && d.responseData.translatedText, 'created-by': '', match: d.responseData && d.responseData.match }]
+      .concat(d.matches || []);
+    let best = null, bestScore = -Infinity;
+    cands.forEach((m) => {
+      const t = String(m.translation || '').trim();
+      if (!hasLetters(t) || t.toLowerCase() === q) return; // a stray "." or the word copied back
+      if (String(m.segment || '').trim().toLowerCase() !== q && Number(m.match) < 0.9) return; // a different phrase
+      const by = String(m['created-by'] || '');
+      if (/wikipedia/i.test(by)) return; // article titles, not translations
+      let s = Number(m.match) || 0;
+      if (by === 'MT!') s += 1; // machine translation of exactly this word
+      s += (Number(m.quality) || 0) / 100;
+      if (lower && /(^|[\s,])\p{Lu}\p{Ll}/u.test(t) && !/^\p{Lu}[^,]*$/u.test(t)) s -= 2; // "Фамилия, Имя"
+      if (/,/.test(t) && !/\s/.test(q)) s -= 0.5; // several words glued together for one word
+      if (s > bestScore) { best = t; bestScore = s; }
+    });
+    return best;
+  }
+
   async function myMemoryTranslate(text, to) {
     const r = await fetch('https://api.mymemory.translated.net/get?' + new URLSearchParams({ q: text, langpair: 'en|' + to }), { signal: AbortSignal.timeout(10000) });
     const d = await r.json();
-    let t = d && d.responseData && d.responseData.translatedText;
-    if (Number(d && d.responseStatus) !== 200 || /MYMEMORY WARNING/i.test(t || '')) throw new Error('quota');
-    if (!hasLetters(t)) t = ((d.matches || []).find((m) => hasLetters(m.translation)) || {}).translation; // the top match can be a stray "."
-    if (!hasLetters(t)) throw new Error('empty');
+    const top = d && d.responseData && d.responseData.translatedText;
+    if (Number(d && d.responseStatus) !== 200 || /MYMEMORY WARNING/i.test(top || '')) throw new Error('quota');
+    let t = pickMyMemory(text, d);
+    if (!t) throw new Error('empty');
     if (text === text.toLowerCase()) t = t.toLowerCase();
-    return { tr: t, alts: [] };
+    return { tr: t, alts: [], by: 'mymemory' };
   }
 
-  async function translate(text, to = lang) {
+  // googleOnly: used when re-translating saved words, so a weak backup answer never overwrites them.
+  async function translate(text, to = lang, googleOnly = false) {
     const key = to + '|' + text.toLowerCase();
     if (trCache.has(key)) return trCache.get(key);
     let res;
     const s = await serverJson('/api/translate', { q: text, from: 'en', to });
     if (s) {
       if (!s.ok) throw new Error(s.data.error || 'Ошибка перевода');
-      res = { tr: s.data.translation, alts: s.data.alts || [] };
+      res = { tr: s.data.translation, alts: s.data.alts || [], by: s.data.by || 'google' };
     } else {
-      try {
-        res = await googleTranslate(text, to);
-      } catch {
-        try {
-          res = await myMemoryTranslate(text, to);
-        } catch {
-          throw new Error('Не удалось получить перевод. Проверь интернет и нажми «Повторить».');
-        }
+      const tries = [googleTranslate, googleTranslate2];
+      if (!googleOnly) tries.push(myMemoryTranslate);
+      for (const fn of tries) {
+        try { res = await fn(text, to); break; } catch { /* try the next service */ }
       }
+      if (!res) throw new Error('Не удалось получить перевод. Проверь интернет и нажми «Повторить».');
     }
-    trCache.set(key, res);
+    if (googleOnly && res.by !== 'google') throw new Error('no google');
+    if (res.by === 'google') trCache.set(key, res); // a backup answer is retried next time
     return res;
   }
 
@@ -553,6 +590,19 @@
       current.alts = existing.alts || [];
       current.status = 'ok';
       renderPopup();
+      if (existing.v !== 3) {
+        // saved from the backup service: fix it now if Google answers
+        try {
+          const res = await translate(text, lang, true);
+          Object.assign(existing, { tr: res.tr, alts: res.alts, by: 'google', v: 3 });
+          saveWords();
+          renderMargin();
+          if (token !== popupToken) return;
+          current.tr = res.tr;
+          current.alts = res.alts;
+          renderPopup();
+        } catch { /* keep what is saved */ }
+      }
       return;
     }
     renderPopup();
@@ -561,6 +611,7 @@
       if (token !== popupToken) return;
       current.tr = res.tr;
       current.alts = res.alts;
+      current.by = res.by;
       current.status = 'ok';
       addWord(current);
       renderPopup();
@@ -597,7 +648,7 @@
     if (words.some((w) => w.key === c.key && w.lang === lang)) return;
     words.unshift({
       id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-      key: c.key, text: c.text, tr: c.tr, alts: c.alts || [], v: 2, context: c.context || '', lang, src: currentSrc,
+      key: c.key, text: c.text, tr: c.tr, alts: c.alts || [], by: c.by || '', v: c.by === 'google' ? 3 : 2, context: c.context || '', lang, src: currentSrc,
       added: Date.now(), right: 0, wrong: 0,
     });
     saveWords();
@@ -810,16 +861,18 @@
   });
 
   // ---------- init ----------
-  // Words saved by earlier versions came from a translation memory that returned stray
-  // punctuation and odd phrases for single words: translate them again, once.
+  // Words not translated by Google (saved by earlier versions, or by the backup service while
+  // Google was unreachable) can hold junk such as "дафф, хилари": translate them again with
+  // Google only. If Google is still unreachable they stay as they are and are retried next visit.
   async function upgradeWords() {
-    const todo = words.filter((w) => w.v !== 2).slice(0, 40);
+    const todo = words.filter((w) => w.v !== 3).slice(0, 40);
     for (const w of todo) {
       try {
-        const res = await translate(w.text, w.lang);
+        const res = await translate(w.text, w.lang, true);
         w.tr = res.tr;
         w.alts = res.alts;
-        w.v = 2;
+        w.by = 'google';
+        w.v = 3;
       } catch {
         break; // no network or the service is down: try again on the next visit
       }
