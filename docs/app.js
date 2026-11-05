@@ -282,12 +282,46 @@
     if (blockedUntil) {
       const host = new URL(url).hostname.replace(/^www\./, '');
       const when = blockedUntil instanceof Date ? ' до ' + blockedUntil.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-      throw new Error('Сервис загрузки (Jina) временно заблокировал ' + host + when + '. Это не ошибка ссылки. Запусти Wordcatcher локально (npm start): там статья скачивается напрямую. ' + PASTE_HINT);
+      throw new Error('Сервис загрузки (Jina) временно заблокировал ' + host + when + '. Это не ошибка ссылки. Открой статью на сайте и нажми закладку «→ Wordcatcher» (перетащи её из подсказки под строкой ссылки на панель закладок) либо запусти Wordcatcher локально (npm start). ' + PASTE_HINT);
     }
     if (status === 429) throw new Error('Сервис загрузки сейчас перегружен. Попробуй через минуту. ' + PASTE_HINT);
     if (status === 401 || status === 403 || status === 402) throw new Error('Сайт не отдаёт статью без входа или подписки. ' + PASTE_HINT);
     throw new Error('Не удалось загрузить статью. Проверь ссылку. ' + PASTE_HINT);
   }
+
+  const HTML_RE = /^\s*(<!doctype html|<html[\s>]|<head[\s>]|<body[\s>])/i;
+
+  // Article from raw page HTML (pasted, or sent by the bookmarklet). `hint` is the page address if known.
+  function importHtml(text, hint) {
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    const found = hint || ((doc.querySelector('link[rel="canonical"]') || {}).href || '') || ((doc.querySelector('meta[property="og:url"]') || {}).content || '');
+    let pageUrl = 'https://example.com/';
+    try { pageUrl = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(found) ? found : 'https://' + found).href; } catch { /* keep default */ }
+    const a = extractClient(text, pageUrl);
+    if (!a) { setStatus('В этом HTML не нашлось статьи (возможно, это страница входа). Скопируй исходный код открытой статьи целиком.', true); return false; }
+    a.src = pageUrl === 'https://example.com/' ? 'paste' : pageUrl;
+    setStatus('');
+    renderArticle(a);
+    store.set('wc_article', a);
+    return true;
+  }
+
+  // Bookmarklet: runs on the article page in the reader's own browser (so no site blocks it),
+  // opens Wordcatcher and hands over the page HTML via postMessage.
+  const BOOKMARKLET = "javascript:(function(){var h=document.documentElement.outerHTML,u=location.href,w=window.open(" + JSON.stringify(location.origin + location.pathname) + ",'wordcatcher');if(!w){alert('Разреши всплывающие окна');return}var n=0,t=setInterval(function(){w.postMessage({wc:'html',html:h,url:u},'*');if(++n>60)clearInterval(t)},500);addEventListener('message',function(e){if(e.data==='wc-ok')clearInterval(t)})})();";
+  const bm = document.getElementById('bookmarklet');
+  if (bm) bm.setAttribute('href', BOOKMARKLET);
+
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || d.wc !== 'html' || typeof d.html !== 'string' || !HTML_RE.test(d.html)) return;
+    if (e.source) e.source.postMessage('wc-ok', '*');
+    const key = (d.url || '') + ':' + d.html.length;
+    if (window.__wcImported === key) return; // the bookmarklet resends until acknowledged
+    window.__wcImported = key;
+    setStatus('Разбираю страницу…');
+    try { importHtml(d.html, String(d.url || '')); } catch { setStatus('Не удалось разобрать страницу.', true); }
+  });
 
   $('#toggle-paste').addEventListener('click', () => $('#paste-form').classList.toggle('hidden'));
 
@@ -318,20 +352,7 @@
     if (!text) return;
     // Page source pasted (open the article → ⌥⌘U → ⌘A ⌘C): extract the article from it locally,
     // no third-party service involved. Works for sites that block the reader services.
-    if (typeof Readability !== 'undefined' && /^\s*(<!doctype html|<html[\s>]|<head[\s>]|<body[\s>])/i.test(text)) {
-      const doc = new DOMParser().parseFromString(text, 'text/html');
-      const typed = $('#url').value.trim();
-      const found = typed || ((doc.querySelector('link[rel="canonical"]') || {}).href || '') || ((doc.querySelector('meta[property="og:url"]') || {}).content || '');
-      let pageUrl = 'https://example.com/';
-      try { pageUrl = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(found) ? found : 'https://' + found).href; } catch { /* keep default */ }
-      const a = extractClient(text, pageUrl);
-      if (!a) { setStatus('В этом HTML не нашлось статьи (возможно, это страница входа). Скопируй исходный код открытой статьи целиком.', true); return; }
-      a.src = pageUrl === 'https://example.com/' ? 'paste' : pageUrl;
-      setStatus('');
-      renderArticle(a);
-      store.set('wc_article', a);
-      return;
-    }
+    if (typeof Readability !== 'undefined' && HTML_RE.test(text)) { importHtml(text, $('#url').value.trim()); return; }
     const blocks = text.split(/\n+/).map((t) => t.trim()).filter(Boolean).map((t) => ({ type: 'p', text: t }));
     const d = { src: 'paste', title: 'Вставленный текст', byline: '', site: '', blocks };
     renderArticle(d);

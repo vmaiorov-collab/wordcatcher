@@ -82,11 +82,11 @@ button.ghost { background: transparent; color: var(--ink); border-color: var(--l
 button.ghost:hover { background: var(--surface); border-color: var(--faint); }
 button.danger { color: var(--bad); }
 
-button.link {
+button.link, a.link {
   background: none; border: none; padding: 0; color: var(--accent); font-weight: 500;
   text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; border-radius: 4px;
 }
-button.link:hover { background: none; text-decoration-thickness: 2px; }
+button.link:hover, a.link:hover { background: none; text-decoration-thickness: 2px; }
 
 button.icon {
   display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0;
