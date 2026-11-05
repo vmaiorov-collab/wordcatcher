@@ -77,6 +77,8 @@
   //     service (r.jina.ai, CORS-enabled, renders the page like a browser), the article is
   //     extracted with Readability and MyMemory is called directly.
   const READER = 'https://r.jina.ai/';
+  // Address of the deployed proxy-worker (see proxy-worker/README.md), e.g. 'https://wordcatcher-proxy.<account>.workers.dev/'. Empty = use only the reader service.
+  const PROXY = '';
   const PASTE_HINT = 'Нажми «Вставить текст вместо ссылки» и вставь текст статьи.';
 
   // Returns { ok, data } if a Wordcatcher server answered, or null on static hosting.
@@ -224,7 +226,23 @@
     return { title, byline: '', site: host.replace(/^www\./, ''), blocks };
   }
 
+  // Optional free Jina API key (jina.ai): with a key Jina does not apply its anonymous per-domain blocks.
+  // It is kept only in this browser (localStorage), never in the repository.
+  const jinaKey = () => { try { return (localStorage.getItem('wc_jina_key') || '').trim(); } catch { return ''; } };
+  const jinaBtn = document.getElementById('jina-key');
+  if (jinaBtn) {
+    const label = () => { jinaBtn.textContent = jinaKey() ? 'Ключ Jina: задан ✓' : 'Ключ Jina'; };
+    label();
+    jinaBtn.addEventListener('click', () => {
+      const v = prompt('Бесплатный API-ключ с jina.ai (хранится только в этом браузере). Пусто — удалить ключ.', jinaKey());
+      if (v === null) return;
+      try { v.trim() ? localStorage.setItem('wc_jina_key', v.trim()) : localStorage.removeItem('wc_jina_key'); } catch { /* storage blocked */ }
+      label();
+    });
+  }
+
   async function readerGet(url, headers) {
+    if (jinaKey()) headers = { ...(headers || {}), Authorization: 'Bearer ' + jinaKey() };
     const slow = setTimeout(() => setStatus('Сайт отвечает медленно, подожди ещё немного…'), 7000);
     try {
       return await fetch(READER + url, { headers, signal: AbortSignal.timeout(30000) });
@@ -240,6 +258,17 @@
       return s.data;
     }
     if (!/^https?:\/\//i.test(url)) throw new Error('Это не похоже на ссылку.');
+
+    // 0) our own fetch proxy (proxy-worker/, Cloudflare Worker) when one is configured
+    if (PROXY && typeof Readability !== 'undefined') {
+      try {
+        const r = await fetch(PROXY + '?url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(25000) });
+        if (r.ok) {
+          const a = extractClient(await r.text(), url);
+          if (a) return a;
+        }
+      } catch { /* fall back to the reader service */ }
+    }
 
     let status = 0;
     let blockedUntil = null; // Jina temporarily blocks some domains (AbuseAlleviationError)
@@ -282,7 +311,7 @@
     if (blockedUntil) {
       const host = new URL(url).hostname.replace(/^www\./, '');
       const when = blockedUntil instanceof Date ? ' до ' + blockedUntil.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-      throw new Error('Сервис загрузки (Jina) временно заблокировал ' + host + when + '. Это не ошибка ссылки. Открой статью на сайте и нажми закладку «→ Wordcatcher» (перетащи её из подсказки под строкой ссылки на панель закладок) либо запусти Wordcatcher локально (npm start). ' + PASTE_HINT);
+      throw new Error('Сервис загрузки (Jina) временно заблокировал ' + host + when + '. Это не ошибка ссылки. Задай бесплатный ключ Jina (кнопка «Ключ Jina» под строкой ссылки: с ключом блокировка не действует), либо открой статью на сайте и нажми закладку «→ Wordcatcher» (перетащи её из подсказки под строкой ссылки на панель закладок) либо запусти Wordcatcher локально (npm start). ' + PASTE_HINT);
     }
     if (status === 429) throw new Error('Сервис загрузки сейчас перегружен. Попробуй через минуту. ' + PASTE_HINT);
     if (status === 401 || status === 403 || status === 402) throw new Error('Сайт не отдаёт статью без входа или подписки. ' + PASTE_HINT);
