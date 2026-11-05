@@ -41,7 +41,7 @@ async function assertPublicUrl(raw) {
 }
 
 // Skip tracking pixels, icons and logos by their file path, not by words inside names ("silicon").
-const JUNK_IMG = /(^|[\/_.-])(pixel|spacer|blank|1x1|tracking|beacon|sprite|logo|icons?|avatar|favicon|emoji)([\/_.-]|$)/i;
+const JUNK_IMG = /(^|[\/_.-])(pixel|spacer|blank|placeholder|1x1|tracking|beacon|sprite|logo|icons?|avatar|favicon|emoji)([\/_.-]|$)/i;
 
 function absUrl(u, base) {
   try {
@@ -58,7 +58,7 @@ const usableImage = (src) => !!src && !/\.svg(\?|$)/i.test(src) && !JUNK_IMG.tes
 // From a srcset take the smallest picture that is at least 800px wide, else the largest.
 function pickSrcset(set) {
   const items = set
-    .split(/,\s+/)
+    .split(/,(?=\s*(?:https?:\/\/|\/|\.))/)
     .map((x) => x.trim().split(/\s+/))
     .filter((a) => a[0])
     .map(([u, d]) => ({
@@ -68,6 +68,15 @@ function pickSrcset(set) {
   if (!items.length) return '';
   const big = items.filter((i) => i.w >= 800).sort((a, b) => a.w - b.w)[0];
   return (big || items.sort((a, b) => b.w - a.w)[0]).u;
+}
+
+// A figure can hold a lazy-load placeholder next to the real picture (BBC): prefer the one with a srcset.
+function bestImg(root) {
+  const imgs = [...root.querySelectorAll('img')];
+  const has = (i, a) => !!(i.getAttribute(a) || '');
+  return imgs.find((i) => has(i, 'srcset') || has(i, 'data-srcset'))
+    || imgs.find((i) => !/placeholder/i.test(i.getAttribute('src') || ''))
+    || imgs[0] || null;
 }
 
 function imageBlock(img, caption, base) {
@@ -99,7 +108,7 @@ function extractArticle(html, pageUrl) {
     const tag = el.tagName.toLowerCase();
     if (tag === 'figure' || tag === 'img') {
       if (tag === 'img' && el.closest('figure')) return; // handled with its figure
-      const img = tag === 'img' ? el : el.querySelector('img');
+      const img = tag === 'img' ? el : bestImg(el);
       if (!img) return;
       const cap = tag === 'figure' ? (el.querySelector('figcaption') || {}).textContent || '' : '';
       const b = imageBlock(img, cap, pageUrl);

@@ -90,7 +90,7 @@
 
   // ---------- images ----------
   // Skip tracking pixels, icons and logos by their file path, not by words inside names ("silicon").
-  const JUNK_IMG = /(^|[\/_.-])(pixel|spacer|blank|1x1|tracking|beacon|sprite|logo|icons?|avatar|favicon|emoji)([\/_.-]|$)/i;
+  const JUNK_IMG = /(^|[\/_.-])(pixel|spacer|blank|placeholder|1x1|tracking|beacon|sprite|logo|icons?|avatar|favicon|emoji)([\/_.-]|$)/i;
   const IMG_MD = /!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
 
   function absUrl(u, base) {
@@ -105,7 +105,7 @@
 
   // From a srcset take the smallest picture that is at least 800px wide, else the largest.
   function pickSrcset(set) {
-    const items = set.split(/,\s+/).map((x) => x.trim().split(/\s+/)).filter((a) => a[0]).map(([u, d]) => ({
+    const items = set.split(/,(?=\s*(?:https?:\/\/|\/|\.))/).map((x) => x.trim().split(/\s+/)).filter((a) => a[0]).map(([u, d]) => ({
       u,
       w: /w$/.test(d || '') ? parseInt(d, 10) : /x$/.test(d || '') ? parseFloat(d) * 400 : 0,
     }));
@@ -114,6 +114,15 @@
     return (big || items.sort((a, b) => b.w - a.w)[0]).u;
   }
 
+  // A figure can hold a lazy-load placeholder next to the real picture (BBC): prefer the one with a srcset.
+  function bestImg(root) {
+    const imgs = [...root.querySelectorAll('img')];
+    const has = (i, a) => !!(i.getAttribute(a) || '');
+    return imgs.find((i) => has(i, 'srcset') || has(i, 'data-srcset'))
+      || imgs.find((i) => !/placeholder/i.test(i.getAttribute('src') || ''))
+      || imgs[0] || null;
+  }
+  
   function imageBlock(img, caption, base) {
     const attr = (n) => img.getAttribute(n) || '';
     const raw = [pickSrcset(attr('srcset') || attr('data-srcset')), attr('data-src'), attr('data-lazy-src'), attr('data-original'), attr('src')]
@@ -144,7 +153,7 @@
       const tag = el.tagName.toLowerCase();
       if (tag === 'figure' || tag === 'img') {
         if (tag === 'img' && el.closest('figure')) return; // handled with its figure
-        const img = tag === 'img' ? el : el.querySelector('img');
+        const img = tag === 'img' ? el : bestImg(el);
         if (!img) return;
         const cap = tag === 'figure' ? ((el.querySelector('figcaption') || {}).textContent || '') : '';
         const b = imageBlock(img, cap, pageUrl);
@@ -233,6 +242,18 @@
     if (!/^https?:\/\//i.test(url)) throw new Error('Это не похоже на ссылку.');
 
     let status = 0;
+    let blockedUntil = null; // Jina temporarily blocks some domains (AbuseAlleviationError)
+    const noteBlock = async (r) => {
+      if (r.ok) return;
+      try {
+        const j = JSON.parse(await r.text());
+        if (j && j.name === 'AbuseAlleviationError') {
+          const m = /blocked until (.+?) due to/.exec(j.message || '');
+          const d = m ? new Date(m[1]) : null;
+          blockedUntil = d && !isNaN(d) ? d : true;
+        }
+      } catch { /* not JSON */ }
+    };
     // 1) the rendered page as HTML, then the same Readability extraction as on the server
     if (typeof Readability !== 'undefined') {
       try {
@@ -241,6 +262,8 @@
         if (r.ok) {
           const a = extractClient(await r.text(), url);
           if (a) return a;
+        } else {
+          await noteBlock(r);
         }
       } catch { /* fall through to markdown */ }
     }
@@ -251,9 +274,16 @@
       if (r.ok) {
         const a = articleFromMarkdown(await r.text(), url);
         if (a) return a;
+      } else if (!blockedUntil) {
+        await noteBlock(r);
       }
     } catch { /* fall through to the error */ }
 
+    if (blockedUntil) {
+      const host = new URL(url).hostname.replace(/^www\./, '');
+      const when = blockedUntil instanceof Date ? ' до ' + blockedUntil.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      throw new Error('Сервис загрузки (Jina) временно заблокировал ' + host + when + '. Это не ошибка ссылки. Запусти Wordcatcher локально (npm start): там статья скачивается напрямую. ' + PASTE_HINT);
+    }
     if (status === 429) throw new Error('Сервис загрузки сейчас перегружен. Попробуй через минуту. ' + PASTE_HINT);
     if (status === 401 || status === 403 || status === 402) throw new Error('Сайт не отдаёт статью без входа или подписки. ' + PASTE_HINT);
     throw new Error('Не удалось загрузить статью. Проверь ссылку. ' + PASTE_HINT);
