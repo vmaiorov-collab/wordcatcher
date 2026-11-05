@@ -316,6 +316,22 @@
     e.preventDefault();
     const text = $('#paste-text').value.trim();
     if (!text) return;
+    // Page source pasted (open the article → ⌥⌘U → ⌘A ⌘C): extract the article from it locally,
+    // no third-party service involved. Works for sites that block the reader services.
+    if (typeof Readability !== 'undefined' && /^\s*(<!doctype html|<html[\s>]|<head[\s>]|<body[\s>])/i.test(text)) {
+      const doc = new DOMParser().parseFromString(text, 'text/html');
+      const typed = $('#url').value.trim();
+      const found = typed || ((doc.querySelector('link[rel="canonical"]') || {}).href || '') || ((doc.querySelector('meta[property="og:url"]') || {}).content || '');
+      let pageUrl = 'https://example.com/';
+      try { pageUrl = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(found) ? found : 'https://' + found).href; } catch { /* keep default */ }
+      const a = extractClient(text, pageUrl);
+      if (!a) { setStatus('В этом HTML не нашлось статьи (возможно, это страница входа). Скопируй исходный код открытой статьи целиком.', true); return; }
+      a.src = pageUrl === 'https://example.com/' ? 'paste' : pageUrl;
+      setStatus('');
+      renderArticle(a);
+      store.set('wc_article', a);
+      return;
+    }
     const blocks = text.split(/\n+/).map((t) => t.trim()).filter(Boolean).map((t) => ({ type: 'p', text: t }));
     const d = { src: 'paste', title: 'Вставленный текст', byline: '', site: '', blocks };
     renderArticle(d);
