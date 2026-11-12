@@ -1,0 +1,56 @@
+plugins {
+    id "com.android.application"
+}
+
+// The web app in ../docs is the single source: it is copied into the APK as assets/www.
+def webAssets = layout.buildDirectory.dir("webAssets")
+def copyWeb = tasks.register("copyWeb", Copy) {
+    from("../../docs")
+    into(webAssets.map { it.dir("www") })
+}
+
+android {
+    namespace "app.wordcatcher"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "app.wordcatcher"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    signingConfigs {
+        // A fixed key kept in the repository, so every build (CI or local) installs over the previous one.
+        shared {
+            storeFile rootProject.file("wordcatcher.keystore")
+            storePassword "android"
+            keyAlias "wordcatcher"
+            keyPassword "android"
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.shared
+        }
+        release {
+            signingConfig signingConfigs.shared
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets.main.assets.srcDir(webAssets)
+
+    lint {
+        abortOnError false
+    }
+}
+
+tasks.named("preBuild") { dependsOn(copyWeb) }

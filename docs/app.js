@@ -78,7 +78,7 @@
   //     extracted with Readability and MyMemory is called directly.
   const READER = 'https://r.jina.ai/';
   // Address of the deployed proxy-worker (see proxy-worker/README.md), e.g. 'https://wordcatcher-proxy.<account>.workers.dev/'. Empty = use only the reader service.
-  const PROXY = '';
+  const PROXY = window.WC_PROXY || ''; // the Android app sets WC_PROXY to its built-in page loader
   const PASTE_HINT = 'Нажми «Вставить текст вместо ссылки» и вставь текст статьи.';
 
   // Returns { ok, data } if a Wordcatcher server answered, or null on static hosting.
