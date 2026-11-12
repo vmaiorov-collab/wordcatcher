@@ -1384,4 +1384,27 @@
   const saved = store.get('wc_article', null);
   renderArticle(saved && saved.blocks ? saved : DEMO);
   upgradeWords();
+
+  // ---------- installed app (PWA) ----------
+  // Offline shell; not inside the Android wrapper, which serves the files itself.
+  if ('serviceWorker' in navigator && !window.WordcatcherNative && /^https?:$/.test(location.protocol)) {
+    navigator.serviceWorker.register('sw.js').catch(() => { /* e.g. private mode */ });
+  }
+
+  // "Share → Wordcatcher" from a browser (share_target in manifest.webmanifest) arrives as
+  // ?url=…&text=…&title=…; Android browsers usually put the link into `text`.
+  (function openShared() {
+    const q = new URLSearchParams(location.search);
+    if (!q.has('url') && !q.has('text')) return;
+    const text = (q.get('text') || '').trim();
+    const link = (q.get('url') || '').trim() || ((/https?:\/\/\S+/i.exec(text) || [])[0] || '');
+    history.replaceState(null, '', location.pathname); // a reload must not open it again
+    if (link && text.length < 2000) {
+      $('#url').value = link;
+      $('#url-form').requestSubmit();
+    } else if (text) {
+      $('#paste-text').value = text;
+      $('#paste-form').requestSubmit();
+    }
+  })();
 })();
